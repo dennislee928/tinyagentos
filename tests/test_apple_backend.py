@@ -1,6 +1,7 @@
 """Unit tests for AppleContainerBackend (subprocess mocked)."""
 from __future__ import annotations
 
+import json
 import os
 from unittest.mock import AsyncMock, patch
 
@@ -45,9 +46,6 @@ async def test_run_invokes_subprocess(monkeypatch):
         assert m.call_args.args[0] == "/usr/local/bin/container"
 
 
-import json
-
-
 @pytest.mark.asyncio
 async def test_list_containers_filters_by_prefix(monkeypatch):
     b = _backend(monkeypatch)
@@ -74,5 +72,14 @@ async def test_list_containers_returns_empty_on_failure(monkeypatch):
     b = _backend(monkeypatch)
     with patch.object(b, "_run", new_callable=AsyncMock) as m:
         m.return_value = (1, "container daemon not running")
+        items = await b.list_containers()
+    assert items == []
+
+
+@pytest.mark.asyncio
+async def test_list_containers_returns_empty_on_bad_json(monkeypatch):
+    b = _backend(monkeypatch)
+    with patch.object(b, "_run", new_callable=AsyncMock) as m:
+        m.return_value = (0, "not json {{{")
         items = await b.list_containers()
     assert items == []

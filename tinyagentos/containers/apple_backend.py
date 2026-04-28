@@ -36,6 +36,7 @@ class AppleContainerBackend(ContainerBackend):
 
     # All ABC methods raise NotImplementedError until subsequent tasks.
     async def list_containers(self, prefix: str = "taos-agent-") -> list[ContainerInfo]:
+        """List all containers whose name starts with prefix."""
         code, output = await self._run([self.binary, "ls", "-a", "--format", "json"])
         if code != 0:
             logger.error("apple container ls failed: %s", output)
