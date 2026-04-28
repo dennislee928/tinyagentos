@@ -274,3 +274,48 @@ async def test_snapshot_list_parses_taos_images(monkeypatch):
         result = await b.snapshot_list("x")
     assert result["success"] is True
     assert result["snapshots"] == ["v1", "v2"]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_create_failure(monkeypatch):
+    b = _backend(monkeypatch)
+    with patch.object(b, "_run", new_callable=AsyncMock) as m:
+        m.return_value = (1, "no such container: x")
+        result = await b.snapshot_create("x", "v1")
+    assert result["success"] is False
+    assert "no such container" in result["output"]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_list_returns_failure_on_nonzero_exit(monkeypatch):
+    b = _backend(monkeypatch)
+    with patch.object(b, "_run", new_callable=AsyncMock) as m:
+        m.return_value = (1, "images daemon error")
+        result = await b.snapshot_list("x")
+    assert result["success"] is False
+    assert result["snapshots"] == []
+
+
+@pytest.mark.asyncio
+async def test_snapshot_list_returns_failure_on_bad_json(monkeypatch):
+    b = _backend(monkeypatch)
+    with patch.object(b, "_run", new_callable=AsyncMock) as m:
+        m.return_value = (0, "not json {{{")
+        result = await b.snapshot_list("x")
+    assert result["success"] is False
+    assert result["snapshots"] == []
+
+
+@pytest.mark.asyncio
+async def test_snapshot_list_excludes_non_taos_images(monkeypatch):
+    b = _backend(monkeypatch)
+    payload = (
+        '[{"reference":"taos/v1:latest"},'
+        '{"reference":"library/debian:bookworm"},'
+        '{"reference":"taos/v2:latest"}]'
+    )
+    with patch.object(b, "_run", new_callable=AsyncMock) as m:
+        m.return_value = (0, payload)
+        result = await b.snapshot_list("x")
+    assert result["success"] is True
+    assert result["snapshots"] == ["v1", "v2"]
