@@ -10,7 +10,7 @@ public final class WindowController {
     public private(set) var mode: WindowMode
     private let serverPort: Int
     private let defaults: UserDefaults
-    private var window: NSWindow?
+    public private(set) var window: NSWindow?
     private var webView: WKWebView?
 
     public init(serverPort: Int, defaults: UserDefaults = .standard) {

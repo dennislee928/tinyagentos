@@ -19,10 +19,14 @@ done
 [[ -n "$OUTPUT" ]] || { echo "--output required" >&2; exit 2; }
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CHECKSUM_FILE="$REPO_ROOT/mac/build/checksums/python-build-standalone.sha256"
 
 # Latest stable release naming convention from astral-sh/python-build-standalone
 TAG="20260414"
+CHECKSUM_FILE="$REPO_ROOT/mac/build/checksums/python-build-standalone-${PYTHON_VER}+${TAG}.sha256"
+[[ -f "$CHECKSUM_FILE" ]] || {
+  echo "[build_python] missing checksum file for ${PYTHON_VER}+${TAG}: $CHECKSUM_FILE" >&2
+  exit 2
+}
 URL="https://github.com/astral-sh/python-build-standalone/releases/download/${TAG}/cpython-${PYTHON_VER}+${TAG}-aarch64-apple-darwin-install_only.tar.gz"
 
 mkdir -p "$OUTPUT"
@@ -44,7 +48,6 @@ tar -xzf "$TARBALL" -C "$OUTPUT/python" --strip-components=1
 rm "$TARBALL"
 
 PYBIN="$OUTPUT/python/bin/python3"
-"$PYBIN" -m pip install --upgrade pip
 "$PYBIN" -m pip install --no-deps -r "$REPO_ROOT/tinyagentos/requirements.lock"
 
 echo "[build_python] done: $OUTPUT/python/bin/python3"

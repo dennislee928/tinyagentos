@@ -4,7 +4,11 @@ import Foundation
 ///
 /// Spawns a child Process, polls /api/health to confirm readiness, and
 /// terminates with SIGTERM -> SIGKILL fallback on shutdown.
-final class ServerProcess {
+// Lifecycle is single-threaded under the launcher: start() runs on main during
+// applicationDidFinishLaunching, waitForReady polls async, stop() runs synchronously
+// from applicationWillTerminate. No concurrent mutation, so unchecked Sendable
+// is correct here.
+final class ServerProcess: @unchecked Sendable {
     let executable: URL
     let arguments: [String]
     let env: [String: String]

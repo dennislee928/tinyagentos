@@ -1,4 +1,4 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.2
 import PackageDescription
 
 // Sparkle 2.6.0 is wired in by the build pipeline (mac/build/build.sh) when
@@ -18,7 +18,7 @@ import PackageDescription
 
 let package = Package(
     name: "taOSLauncher",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v26)],
     targets: [
         .executableTarget(
             name: "taOSLauncher",

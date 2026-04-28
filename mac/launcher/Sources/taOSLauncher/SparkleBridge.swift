@@ -25,7 +25,11 @@ public final class SparkleBridge {
         self.init(infoDict: Bundle.main.infoDictionary ?? [:])
     }
 
-    public var canCheckForUpdates: Bool { feedURL != nil && publicKey != nil }
+    public var canCheckForUpdates: Bool {
+        guard feedURL != nil else { return false }
+        let key = publicKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !key.isEmpty
+    }
 
     public func startAutomaticUpdates() {
         #if canImport(Sparkle)

@@ -19,17 +19,19 @@ def main() -> None:
     env_port = os.environ.get("TAOS_PORT")
     env_data_dir = os.environ.get("TAOS_DATA_DIR")
 
+    data_dir = Path(env_data_dir) if env_data_dir else None
+    if data_dir is not None:
+        _seed_data_dir(data_dir)
+
+    config_path = (data_dir or (PROJECT_DIR / "data")) / "config.yaml"
+
     if env_host or env_port:
         host = env_host or "127.0.0.1"
         port = int(env_port) if env_port else 6969
     else:
-        config = load_config(PROJECT_DIR / "data" / "config.yaml")
+        config = load_config(config_path)
         host = config.server.get("host", "0.0.0.0")
         port = config.server.get("port", 6969)
-
-    data_dir = Path(env_data_dir) if env_data_dir else None
-    if data_dir is not None:
-        _seed_data_dir(data_dir)
 
     app = create_app(data_dir=data_dir)
     uvicorn.run(app, host=host, port=port)

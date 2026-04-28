@@ -29,9 +29,13 @@ fi
 # Empty-array expansion is unbound-safe with this guard (macOS ships bash 3.2)
 EA=("${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}")
 
-# Sign nested binaries deepest-first
-find "$APP/Contents" \( -type f -perm -u+x -o -name "*.dylib" -o -name "*.framework" \) -print0 \
-  | xargs -0 -I{} codesign --force --sign "$IDENTITY" "${EA[@]+"${EA[@]}"}" {} 2>/dev/null || true
+# Sign nested binaries deepest-first. We use a while-read loop instead of
+# `xargs ... 2>/dev/null || true` so any codesign failure surfaces and exits.
+while IFS= read -r -d '' bin; do
+  codesign --force --sign "$IDENTITY" "${EA[@]+"${EA[@]}"}" "$bin"
+done < <(
+  find "$APP/Contents" -depth \( -type f -perm -u+x -o -type f -name "*.dylib" \) -print0
+)
 
 # Sign frameworks
 find "$APP/Contents/Frameworks" -name "*.framework" -maxdepth 2 -type d -print0 \

@@ -19,7 +19,11 @@ done
 [[ -n "$OUTPUT" ]] || { echo "--output required" >&2; exit 2; }
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CHECKSUM_FILE="$REPO_ROOT/mac/build/checksums/apple-container-cli.sha256"
+CHECKSUM_FILE="$REPO_ROOT/mac/build/checksums/apple-container-cli-${CLI_VER}.sha256"
+[[ -f "$CHECKSUM_FILE" ]] || {
+  echo "[fetch_container_cli] missing checksum file for ${CLI_VER}: $CHECKSUM_FILE" >&2
+  exit 2
+}
 
 URL="https://github.com/apple/container/releases/download/${CLI_VER}/container-${CLI_VER}-installer-signed.pkg"
 mkdir -p "$OUTPUT"

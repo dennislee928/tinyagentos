@@ -12,6 +12,7 @@ struct AppEntry {
     }
 }
 
+@MainActor
 final class TaOSAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var menuBar: NSMenu!
@@ -30,7 +31,10 @@ final class TaOSAppDelegate: NSObject, NSApplicationDelegate {
         sparkle.startAutomaticUpdates()
         installSignalHandlers()
 
-        NSWorkspace.shared.notificationCenter.addObserver(
+        // NSWindow.willCloseNotification is posted on the default center, not
+        // the workspace one. Object filter limits the observer to the taOS main
+        // window so Sparkle / future auxiliary windows can't reset our state.
+        NotificationCenter.default.addObserver(
             self, selector: #selector(windowWillClose(_:)),
             name: NSWindow.willCloseNotification, object: nil
         )
@@ -107,11 +111,11 @@ final class TaOSAppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        Task {
+        Task { @MainActor in
             let url = URL(string: "http://127.0.0.1:\(port)/api/health")!
             let ready = await server.waitForReady(timeoutSeconds: 15, healthURL: url)
             if !ready {
-                await MainActor.run { self.statusItem.button?.title = "taOS ⚠" }
+                self.statusItem.button?.title = "taOS ⚠"
             }
         }
     }
@@ -131,6 +135,8 @@ final class TaOSAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func windowWillClose(_ notification: Notification) {
+        guard let closingWindow = notification.object as? NSWindow,
+              closingWindow == windowController.window else { return }
         NSApp.setActivationPolicy(.accessory)
         keyboardMonitor.fullscreen = false
     }

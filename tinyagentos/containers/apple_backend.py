@@ -25,14 +25,35 @@ class AppleContainerBackend(ContainerBackend):
         self.binary = os.environ.get("TAOS_CONTAINER_BIN", "container")
 
     async def _run(self, cmd: list[str], timeout: int = 120) -> tuple[int, str]:
-        """Run a command and return (returncode, output)."""
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return proc.returncode, stdout.decode() if stdout else ""
+        """Run a command and return a normalised (returncode, output).
+
+        Callers expect a tuple even when the binary is missing or the command
+        times out, so both failure modes are mapped to non-zero exit codes
+        instead of propagating exceptions. ``asyncio.wait_for`` cancels the
+        coroutine but does not stop the child, so we terminate it explicitly
+        on timeout to avoid leaking processes.
+        """
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+        except FileNotFoundError as exc:
+            return 127, f"{self.binary}: {exc}"
+
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+            return 124, f"command timed out after {timeout}s: {' '.join(cmd)}"
+
+        return proc.returncode, stdout.decode(errors="replace") if stdout else ""
 
     async def list_containers(self, prefix: str = "taos-agent-") -> list[ContainerInfo]:
         """List all containers whose name starts with prefix."""
@@ -80,6 +101,15 @@ class AppleContainerBackend(ContainerBackend):
         host_uid: int | None = None,
         root_size_gib: int | None = None,
     ) -> dict:
+        # Apple's container CLI does not currently expose host UID mapping for
+        # bind mounts. Reject the request explicitly so callers don't silently
+        # get root-owned files inside the container.
+        if host_uid is not None:
+            return {
+                "success": False,
+                "output": "",
+                "note": "apple container backend does not support host_uid mapping yet",
+            }
         argv = [self.binary, "run", "-d", "--name", name]
         if memory_limit:
             # Convert "2GB"/"512MB" → "2g"/"512m" for Apple CLI

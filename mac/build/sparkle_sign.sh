@@ -38,6 +38,7 @@ echo "[sparkle_sign] $SIGNATURE_LINE"
 
 # Write the .sig sidecar
 SIG_FIELD="$(echo "$SIGNATURE_LINE" | sed -nE 's/.*sparkle:edSignature="([^"]+)".*/\1/p')"
+[[ -n "$SIG_FIELD" ]] || { echo "failed to parse sparkle:edSignature" >&2; exit 1; }
 echo -n "$SIG_FIELD" > "${DMG}.sig"
 
 # Build the appcast snippet
