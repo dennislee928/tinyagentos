@@ -57,6 +57,16 @@ find "$CONTENTS/Resources/taos" -type d -name __pycache__ -exec rm -rf {} +
 find "$CONTENTS/Resources/taos" -type f -name "*.pyc" -delete
 cp "$REPO_ROOT/pyproject.toml" "$CONTENTS/Resources/taos/pyproject.toml"
 
+# Bundle the data/ skeleton (config example, seed agents, templates) so the
+# launcher can copy it into ~/Library/Application Support/taOS on first run.
+if [[ -d "$REPO_ROOT/data" ]]; then
+  cp -R "$REPO_ROOT/data" "$CONTENTS/Resources/taos/data"
+fi
+# Bundle the app-catalog so backend auto-registration can find service manifests.
+if [[ -d "$REPO_ROOT/app-catalog" ]]; then
+  cp -R "$REPO_ROOT/app-catalog" "$CONTENTS/Resources/taos/app-catalog"
+fi
+
 # Frontend
 cp -R "$STAGING/frontend" "$CONTENTS/Resources/frontend"
 

@@ -22,6 +22,10 @@ npm ci
 echo "[build_frontend] npm run build"
 npm run build
 
+# Vite is configured (desktop/vite.config.ts) to write to ../static/desktop
+DIST="$REPO_ROOT/static/desktop"
+[[ -d "$DIST" ]] || { echo "[build_frontend] missing $DIST" >&2; exit 1; }
+
 mkdir -p "$OUTPUT/frontend"
-cp -R dist/. "$OUTPUT/frontend/"
+cp -R "$DIST"/. "$OUTPUT/frontend/"
 echo "[build_frontend] done: $OUTPUT/frontend"

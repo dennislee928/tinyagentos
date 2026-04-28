@@ -41,13 +41,16 @@ mkdir -p "$WORK"
 
 echo "[fetch_container_cli] extracting pkg"
 (cd "$WORK" && xar -xf "$PKG")
-mkdir -p "$WORK/payload"
-(cd "$WORK/payload" && gunzip -dc "$WORK/Payload" | cpio -i --quiet)
+# The pkg's Payload is a gzipped cpio archive at $WORK/Payload (case-sensitive
+# name — note this collides with a directory called "payload" on case-insensitive
+# APFS, so we extract into a separately-named sibling directory).
+mkdir -p "$WORK/extracted"
+(cd "$WORK/extracted" && gunzip -dc "$WORK/Payload" | cpio -i --quiet)
 
 mkdir -p "$OUTPUT/bin" "$OUTPUT/libexec"
-cp "$WORK/payload/bin/container" "$OUTPUT/bin/container"
+cp "$WORK/extracted/bin/container" "$OUTPUT/bin/container"
 chmod +x "$OUTPUT/bin/container"
-cp -R "$WORK/payload/libexec/container" "$OUTPUT/libexec/container"
+cp -R "$WORK/extracted/libexec/container" "$OUTPUT/libexec/container"
 
 rm -rf "$WORK" "$PKG"
 

@@ -20,6 +20,7 @@ final class TaOSAppDelegate: NSObject, NSApplicationDelegate {
     private var keyboardMonitor = KeyboardMonitor()
     private var sparkle = SparkleBridge()
     private let port: Int = 7117
+    private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installStatusItem()
@@ -27,6 +28,7 @@ final class TaOSAppDelegate: NSObject, NSApplicationDelegate {
         windowController = WindowController(serverPort: port)
         keyboardMonitor.install()
         sparkle.startAutomaticUpdates()
+        installSignalHandlers()
 
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(windowWillClose(_:)),
@@ -34,15 +36,21 @@ final class TaOSAppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        let server = serverProcess
-        let group = DispatchGroup()
-        group.enter()
-        Task {
-            await server?.stop(gracefulTimeoutSeconds: 5)
-            group.leave()
+    // Route shell-delivered SIGTERM/SIGINT through the normal NSApp.terminate
+    // path so applicationWillTerminate runs and the Python child is reaped.
+    // Without this, `pkill -TERM` on the launcher orphans the server.
+    private func installSignalHandlers() {
+        for sig in [SIGTERM, SIGINT] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler { NSApp.terminate(nil) }
+            source.resume()
+            signalSources.append(source)
         }
-        _ = group.wait(timeout: .now() + 7)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        serverProcess?.stop(gracefulTimeoutSeconds: 5)
     }
 
     private func installStatusItem() {
@@ -75,6 +83,9 @@ final class TaOSAppDelegate: NSObject, NSApplicationDelegate {
 
         let env: [String: String] = [
             "PYTHONPATH": taosRoot.path,
+            // Keep .pyc files out of the bundle — Python writes them next to
+            // sources by default, which would invalidate the codesign seal.
+            "PYTHONDONTWRITEBYTECODE": "1",
             "TAOS_DATA_DIR": dataDir.path,
             "TAOS_HOST": "127.0.0.1",
             "TAOS_PORT": "\(port)",

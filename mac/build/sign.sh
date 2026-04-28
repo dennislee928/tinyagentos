@@ -26,16 +26,19 @@ else
   echo "[sign] ad-hoc signing (v0.1, no Dev ID)"
 fi
 
+# Empty-array expansion is unbound-safe with this guard (macOS ships bash 3.2)
+EA=("${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}")
+
 # Sign nested binaries deepest-first
 find "$APP/Contents" \( -type f -perm -u+x -o -name "*.dylib" -o -name "*.framework" \) -print0 \
-  | xargs -0 -I{} codesign --force --sign "$IDENTITY" "${EXTRA_ARGS[@]}" {} 2>/dev/null || true
+  | xargs -0 -I{} codesign --force --sign "$IDENTITY" "${EA[@]+"${EA[@]}"}" {} 2>/dev/null || true
 
 # Sign frameworks
 find "$APP/Contents/Frameworks" -name "*.framework" -maxdepth 2 -type d -print0 \
-  | xargs -0 -I{} codesign --force --sign "$IDENTITY" "${EXTRA_ARGS[@]}" {}
+  | xargs -0 -I{} codesign --force --sign "$IDENTITY" "${EA[@]+"${EA[@]}"}" {}
 
 # Sign the bundle itself last
-codesign --force --deep --sign "$IDENTITY" "${EXTRA_ARGS[@]}" "$APP"
+codesign --force --deep --sign "$IDENTITY" "${EA[@]+"${EA[@]}"}" "$APP"
 
 echo "[sign] verifying"
 codesign --verify --deep --strict --verbose=2 "$APP"

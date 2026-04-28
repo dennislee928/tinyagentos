@@ -69,7 +69,9 @@ final class ServerProcess {
     }
 
     /// Sends SIGTERM, waits up to graceful timeout, then SIGKILL if still running.
-    func stop(gracefulTimeoutSeconds: Double) async {
+    /// Synchronous so it can run on the main thread during applicationWillTerminate
+    /// without deadlocking on a Task that needs the main actor.
+    func stop(gracefulTimeoutSeconds: Double) {
         guard let proc = process, proc.isRunning else {
             cleanup()
             return
@@ -78,7 +80,7 @@ final class ServerProcess {
         proc.terminate()
         let deadline = Date().addingTimeInterval(gracefulTimeoutSeconds)
         while proc.isRunning && Date() < deadline {
-            try? await Task.sleep(nanoseconds: 100_000_000)
+            Thread.sleep(forTimeInterval: 0.1)
         }
         if proc.isRunning {
             kill(proc.processIdentifier, SIGKILL)

@@ -29,7 +29,7 @@ final class ServerProcessTests: XCTestCase {
         XCTAssertTrue(server.isRunning)
 
         try await Task.sleep(nanoseconds: 200_000_000)
-        await server.stop(gracefulTimeoutSeconds: 2.0)
+        server.stop(gracefulTimeoutSeconds: 2.0)
         XCTAssertFalse(server.isRunning)
     }
 }

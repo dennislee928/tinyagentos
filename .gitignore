@@ -4,6 +4,7 @@ __pycache__/
 dist/
 build/
 !mac/build/
+mac/launcher/.build/
 *.db
 .superpowers/
 .worktrees/
