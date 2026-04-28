@@ -69,7 +69,7 @@ class AppleContainerBackend(ContainerBackend):
     async def create_container(
         self,
         name: str,
-        image: str = "images:debian/bookworm",
+        image: str = "docker.io/library/debian:bookworm",
         memory_limit: str | None = None,
         cpu_limit: int | None = None,
         mounts: list[tuple[str, str]] | None = None,
@@ -77,7 +77,27 @@ class AppleContainerBackend(ContainerBackend):
         host_uid: int | None = None,
         root_size_gib: int | None = None,
     ) -> dict:
-        raise NotImplementedError
+        argv = [self.binary, "run", "-d", "--name", name]
+        if memory_limit:
+            # Convert "2GB"/"512MB" → "2g"/"512m" for Apple CLI
+            ml = memory_limit.strip().lower().replace("gb", "g").replace("mb", "m")
+            argv += ["--memory", ml]
+        if cpu_limit:
+            argv += ["--cpus", str(cpu_limit)]
+        for host_path, guest_path in mounts or []:
+            argv += ["-v", f"{host_path}:{guest_path}"]
+        for key, value in (env or {}).items():
+            argv += ["-e", f"{key}={value}"]
+        argv.append(image)
+
+        code, output = await self._run(argv)
+        if code != 0:
+            return {"success": False, "output": output}
+
+        if root_size_gib is not None:
+            await self.set_root_quota(name, root_size_gib)
+
+        return {"success": True, "output": output.strip()}
 
     async def exec_in_container(
         self, name: str, cmd: list[str], timeout: int = 300

@@ -83,3 +83,40 @@ async def test_list_containers_returns_empty_on_bad_json(monkeypatch):
         m.return_value = (0, "not json {{{")
         items = await b.list_containers()
     assert items == []
+
+
+@pytest.mark.asyncio
+async def test_create_container_builds_argv(monkeypatch):
+    b = _backend(monkeypatch, "/usr/local/bin/container")
+    with patch.object(b, "_run", new_callable=AsyncMock) as m:
+        m.return_value = (0, "abc123")
+        result = await b.create_container(
+            name="taos-agent-bob",
+            image="docker.io/library/debian:bookworm",
+            memory_limit="2GB",
+            cpu_limit=2,
+            mounts=[("/host/data", "/data")],
+            env={"FOO": "bar"},
+        )
+
+    assert result["success"] is True
+    argv = m.call_args.args[0]
+    assert argv[0] == "/usr/local/bin/container"
+    assert argv[1] == "run"
+    assert "-d" in argv
+    assert "--name" in argv and "taos-agent-bob" in argv
+    assert "--memory" in argv and "2g" in argv
+    assert "--cpus" in argv and "2" in argv
+    assert "-v" in argv and "/host/data:/data" in argv
+    assert "-e" in argv and "FOO=bar" in argv
+    assert "docker.io/library/debian:bookworm" in argv
+
+
+@pytest.mark.asyncio
+async def test_create_container_returns_failure(monkeypatch):
+    b = _backend(monkeypatch)
+    with patch.object(b, "_run", new_callable=AsyncMock) as m:
+        m.return_value = (125, "image not found")
+        result = await b.create_container(name="taos-agent-bad", image="nonexistent")
+    assert result["success"] is False
+    assert "image not found" in result["output"]
