@@ -6,6 +6,10 @@ from tinyagentos.containers.backend import detect_runtime
 
 
 class TestDetectRuntime:
+    @pytest.fixture(autouse=True)
+    def clear_apple_env(self, monkeypatch):
+        monkeypatch.delenv("TAOS_CONTAINER_BIN", raising=False)
+
     def test_detect_lxc(self):
         with patch("shutil.which", side_effect=lambda x: "/usr/bin/incus" if x == "incus" else None):
             assert detect_runtime() == "lxc"
@@ -55,3 +59,9 @@ class TestDetectRuntimeApple:
         with patch.object(sys, "platform", "linux"), \
              patch("shutil.which", side_effect=lambda x: "/usr/bin/docker" if x == "docker" else None):
             assert detect_runtime() == "docker"
+
+    def test_apple_wins_over_lxc_on_darwin(self):
+        with patch.object(sys, "platform", "darwin"), \
+             patch.dict(os.environ, {"TAOS_CONTAINER_BIN": "/x/container"}, clear=False), \
+             patch("shutil.which", side_effect=lambda x: "/usr/bin/incus" if x == "incus" else None):
+            assert detect_runtime() == "apple"
