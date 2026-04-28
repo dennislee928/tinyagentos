@@ -34,7 +34,6 @@ class AppleContainerBackend(ContainerBackend):
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return proc.returncode, stdout.decode() if stdout else ""
 
-    # All ABC methods raise NotImplementedError until subsequent tasks.
     async def list_containers(self, prefix: str = "taos-agent-") -> list[ContainerInfo]:
         """List all containers whose name starts with prefix."""
         code, output = await self._run([self.binary, "ls", "-a", "--format", "json"])
@@ -99,20 +98,12 @@ class AppleContainerBackend(ContainerBackend):
             return {"success": False, "output": output}
 
         if root_size_gib is not None:
-            try:
-                quota_result = await self.set_root_quota(name, root_size_gib)
-                if isinstance(quota_result, dict) and not quota_result.get("success"):
-                    logger.warning(
-                        "set_root_quota for %s did not succeed: %s",
-                        name,
-                        quota_result.get("note") or quota_result.get("output"),
-                    )
-            except NotImplementedError:
+            quota_result = await self.set_root_quota(name, root_size_gib)
+            if isinstance(quota_result, dict) and not quota_result.get("success"):
                 logger.warning(
-                    "set_root_quota not yet implemented on Apple backend; "
-                    "ignoring root_size_gib=%s for %s",
-                    root_size_gib,
+                    "set_root_quota for %s did not succeed: %s",
                     name,
+                    quota_result.get("note") or quota_result.get("output"),
                 )
 
         return {"success": True, "output": output.strip()}
