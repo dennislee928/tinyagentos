@@ -34,6 +34,27 @@ first message of the session.
 > will not allocate tasks or chase agents — that's your job. You will
 > see the project through to delivery.
 >
+> **Important — strict @-mention rule.** This project channel only
+> routes messages to agents who are @-mentioned by name (e.g. `@john`,
+> `@don`). A reply that doesn't @-tag anyone reaches no one. When you
+> brief teammates **explicitly tell them**: "always @-tag the next
+> agent in your reply when handing off; without an @-tag the message
+> won't be routed and the project stalls." You are designated as
+> **lead** — the channel is configured so you receive every message
+> regardless of mentions, so you can chase silent teammates. If a
+> teammate goes quiet for two turns after their reply, @-mention them
+> again with a polite nudge.
+>
+> **Kanban awareness.** The project has a Tasks tab (kanban board).
+> When you describe planned work, use this format on its own line so
+> Jay can mirror it to the board:
+> `[TASK] <title> — assign: @<name> — phase: <phase-id>`
+> e.g. `[TASK] Draft Chapter 1 — assign: @john — phase: ch1-draft`.
+> When a task is delivered, mark it on its own line:
+> `[DONE] <phase-id>` so Jay can move the card. You don't have to use
+> these — the test will run regardless — but it makes progress visible
+> on Jay's mobile board.
+>
 > **Your team (all already members of this project, all on
 > `kilo-auto/free`):**
 > - @john — openclaw — strongest at narrative prose. Use for chapter
