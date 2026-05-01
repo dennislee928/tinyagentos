@@ -41,6 +41,7 @@ class BeadsBridge:
         broker,
         data_root: Path,
         debounce_seconds: float = 0.2,
+        config=None,
     ) -> None:
         self._project_store = project_store
         self._task_store = task_store
@@ -49,6 +50,7 @@ class BeadsBridge:
         self._broker = broker
         self._data_root = Path(data_root)
         self._debounce = float(debounce_seconds)
+        self._config = config
 
         self._dirty: set[str] = set()
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -395,18 +397,58 @@ class BeadsBridge:
         return acted
 
     def _resolve_assignee(self, project_id: str, name: str, members: list[dict]) -> str | None:
-        """Resolve a lowercased @name to a member_id from the project member list.
+        """Resolve a @name to the agent's hex member_id.
 
-        members is the result of project_store.list_members(project_id).
-        The member_id column stores the agent's hex id in production; in tests
-        (no config path) it stores the name directly. We do a case-insensitive
-        match against member_id so both paths resolve correctly.
+        When config is None (test path with name-keyed members), falls back to
+        matching @name directly against member_id — the same None-guard used in
+        a2a._resolve_member_names.
+
+        When config is available, builds a name→agent lookup from config.agents
+        (keyed by both id and name, case-insensitive on names), resolves the hex
+        id, then confirms that id is present in the project's members list. If the
+        name doesn't exist in config, or exists but isn't a project member, returns
+        None and logs at info level.
         """
-        for m in members:
-            mid = m.get("member_id", "")
-            if mid.lower() == name:
-                return mid
-        return None
+        name_lower = name.lower()
+        member_ids = {m.get("member_id", "") for m in members}
+
+        if self._config is None:
+            # Test path: member_id holds the name directly.
+            for mid in member_ids:
+                if mid.lower() == name_lower:
+                    return mid
+            return None
+
+        agents = getattr(self._config, "agents", None) or []
+        by_id: dict[str, dict] = {}
+        by_name: dict[str, dict] = {}
+        for agent in agents:
+            aid = agent.get("id")
+            aname = agent.get("name")
+            if aid:
+                by_id[aid] = agent
+            if aname:
+                by_name[aname.lower()] = agent
+
+        agent = by_name.get(name_lower)
+        if agent is None:
+            logger.info(
+                "beads bridge: /new @%s not found in config agents for project %s"
+                " — creating task unassigned",
+                name, project_id,
+            )
+            return None
+
+        resolved_id = agent.get("id")
+        if resolved_id not in member_ids:
+            logger.info(
+                "beads bridge: /new @%s resolved to %s but is not a member of project %s"
+                " — creating task unassigned",
+                name, resolved_id, project_id,
+            )
+            return None
+
+        return resolved_id
 
     async def _dispatch_new_verbs(
         self, body: str, project_id: str, author: str

@@ -48,6 +48,7 @@ def _make_bridge(tmp_path: Path, **overrides) -> BeadsBridge:
         broker=overrides.get("broker", broker),
         data_root=tmp_path,
         debounce_seconds=overrides.get("debounce_seconds", 0.05),
+        config=overrides.get("config", None),
     )
 
 
@@ -994,3 +995,108 @@ async def test_on_chat_message_new_failure_is_silent(tmp_path):
     bridge._task_store.create_task = AsyncMock(side_effect=ValueError("db error"))
     # Should not raise
     await bridge.on_chat_message("prj_1", "ch_1", _msg('/new "Fail silently"'))
+
+
+# ---------------------------------------------------------------------------
+# _resolve_assignee — config-based name→hex-id lookup
+# ---------------------------------------------------------------------------
+
+def _make_config(agents):
+    """Minimal config stub with a .agents list."""
+    config = MagicMock()
+    config.agents = agents
+    return config
+
+
+@pytest.mark.asyncio
+async def test_resolve_assignee_with_config_matches_name_to_hex_id(tmp_path):
+    """/new "..." @john with config resolves to the hex agent id."""
+    config = _make_config([{"id": "91a640130122", "name": "john"}])
+    bridge = _make_bridge(tmp_path, config=config)
+    bridge._channel_store.list_channels = AsyncMock(return_value=[_a2a_ch()])
+    bridge._project_store.list_members = AsyncMock(
+        return_value=[{"member_id": "91a640130122", "member_kind": "native"}]
+    )
+    bridge._task_store.create_task = AsyncMock(
+        return_value={"id": "tsk_x", "project_id": "prj_1", "title": "Do thing"}
+    )
+    await bridge.on_chat_message("prj_1", "ch_1", _msg('/new "Do thing" @john'))
+    kwargs = bridge._task_store.create_task.await_args.kwargs
+    assert kwargs["assignee_id"] == "91a640130122"
+
+
+@pytest.mark.asyncio
+async def test_resolve_assignee_with_config_case_insensitive(tmp_path):
+    """/new "..." @JOHN (uppercase) resolves the same as @john."""
+    config = _make_config([{"id": "91a640130122", "name": "john"}])
+    bridge = _make_bridge(tmp_path, config=config)
+    bridge._channel_store.list_channels = AsyncMock(return_value=[_a2a_ch()])
+    bridge._project_store.list_members = AsyncMock(
+        return_value=[{"member_id": "91a640130122", "member_kind": "native"}]
+    )
+    bridge._task_store.create_task = AsyncMock(
+        return_value={"id": "tsk_x", "project_id": "prj_1", "title": "T"}
+    )
+    await bridge.on_chat_message("prj_1", "ch_1", _msg('/new "T" @JOHN'))
+    kwargs = bridge._task_store.create_task.await_args.kwargs
+    assert kwargs["assignee_id"] == "91a640130122"
+
+
+@pytest.mark.asyncio
+async def test_resolve_assignee_with_config_agent_not_member(tmp_path, caplog):
+    """@alice exists in config but is not a project member → unassigned + info log."""
+    import logging
+    config = _make_config([
+        {"id": "91a640130122", "name": "john"},
+        {"id": "aabbcc112233", "name": "alice"},
+    ])
+    bridge = _make_bridge(tmp_path, config=config)
+    bridge._channel_store.list_channels = AsyncMock(return_value=[_a2a_ch()])
+    # Only john is a project member; alice is not
+    bridge._project_store.list_members = AsyncMock(
+        return_value=[{"member_id": "91a640130122", "member_kind": "native"}]
+    )
+    bridge._task_store.create_task = AsyncMock(
+        return_value={"id": "tsk_x", "project_id": "prj_1", "title": "T"}
+    )
+    with caplog.at_level(logging.INFO, logger="tinyagentos.projects.beads_bridge"):
+        await bridge.on_chat_message("prj_1", "ch_1", _msg('/new "T" @alice'))
+    kwargs = bridge._task_store.create_task.await_args.kwargs
+    assert kwargs["assignee_id"] is None
+    assert "alice" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_resolve_assignee_with_config_stranger_not_in_config(tmp_path, caplog):
+    """@stranger doesn't exist in config.agents at all → unassigned + info log."""
+    import logging
+    config = _make_config([{"id": "91a640130122", "name": "john"}])
+    bridge = _make_bridge(tmp_path, config=config)
+    bridge._channel_store.list_channels = AsyncMock(return_value=[_a2a_ch()])
+    bridge._project_store.list_members = AsyncMock(
+        return_value=[{"member_id": "91a640130122", "member_kind": "native"}]
+    )
+    bridge._task_store.create_task = AsyncMock(
+        return_value={"id": "tsk_x", "project_id": "prj_1", "title": "T"}
+    )
+    with caplog.at_level(logging.INFO, logger="tinyagentos.projects.beads_bridge"):
+        await bridge.on_chat_message("prj_1", "ch_1", _msg('/new "T" @stranger'))
+    kwargs = bridge._task_store.create_task.await_args.kwargs
+    assert kwargs["assignee_id"] is None
+    assert "stranger" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_resolve_assignee_config_none_falls_back_to_member_id(tmp_path):
+    """config=None path: member_id holds the name directly (existing test compat)."""
+    bridge = _make_bridge(tmp_path)  # no config → self._config is None
+    bridge._channel_store.list_channels = AsyncMock(return_value=[_a2a_ch()])
+    bridge._project_store.list_members = AsyncMock(
+        return_value=[{"member_id": "john", "member_kind": "native"}]
+    )
+    bridge._task_store.create_task = AsyncMock(
+        return_value={"id": "tsk_x", "project_id": "prj_1", "title": "T"}
+    )
+    await bridge.on_chat_message("prj_1", "ch_1", _msg('/new "T" @john'))
+    kwargs = bridge._task_store.create_task.await_args.kwargs
+    assert kwargs["assignee_id"] == "john"
