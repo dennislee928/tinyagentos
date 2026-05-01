@@ -642,6 +642,7 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
                 msg_store=chat_messages,
                 broker=project_event_broker,
                 data_root=projects_root,
+                config=config,
             )
             await beads_bridge.start()
             await beads_bridge.backfill_active()
