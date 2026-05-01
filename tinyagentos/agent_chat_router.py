@@ -142,6 +142,9 @@ class AgentChatRouter:
                 logger.warning("context fetch failed for channel %s", channel.get("id"), exc_info=True)
                 context = []
 
+        leads = list((settings.get("leads") or []))  # post-PR #291
+        from tinyagentos.agent_manual import build_manual
+
         for agent_name in recipients:
             forced = force_by_slug.get(agent_name, False)
             if not forced:
@@ -165,6 +168,8 @@ class AgentChatRouter:
                 )
                 continue
 
+            manual_text = build_manual(channel, agent_name, leads)
+            agent_context = [{"role": "system", "content": manual_text}, *context]
             await bridge.enqueue_user_message(
                 agent_name,
                 {
@@ -176,7 +181,7 @@ class AgentChatRouter:
                     "created_at": message.get("created_at"),
                     "hops_since_user": next_hops,
                     "force_respond": forced,
-                    "context": context,
+                    "context": agent_context,
                     "thread_id": thread_id,
                 },
             )

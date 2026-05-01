@@ -522,3 +522,93 @@ async def test_lead_who_is_author_does_not_receive_own_message():
 
     slugs = [c[0] for c in bridge.calls]
     assert "coord" not in slugs
+
+
+# ---------------------------------------------------------------------------
+# System context (agent_manual) injection
+# ---------------------------------------------------------------------------
+
+def _a2a_project_channel_with_leads(members, leads, mode="quiet"):
+    return {
+        "id": "c1",
+        "type": "group",
+        "project_id": "proj-1",
+        "members": members,
+        "settings": {
+            "kind": "a2a",
+            "response_mode": mode,
+            "leads": leads,
+            "max_hops": 3,
+            "cooldown_seconds": 5,
+            "rate_cap_per_minute": 20,
+            "muted": [],
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_manual_injected_as_first_system_message():
+    """context[0] passed to the bridge must be a system-role manual message."""
+    bridge = _FakeBridge()
+    state = _state_for({"name": "coord", "status": "running"}, bridge=bridge)
+    state.config.agents = [{"name": "coord", "status": "running"}]
+    from tinyagentos.chat.group_policy import GroupPolicy
+    state.group_policy = GroupPolicy()
+    router = AgentChatRouter(state)
+
+    msg = {"id": "m1", "author_id": "user", "author_type": "user",
+           "content": "@coord go", "metadata": {"hops_since_user": 0}}
+    ch = _a2a_project_channel_with_leads(["user", "coord"], leads=["coord"])
+    await router._route(msg, ch)
+
+    assert len(bridge.calls) == 1
+    _, enqueued = bridge.calls[0]
+    ctx = enqueued["context"]
+    assert ctx, "context must not be empty"
+    first = ctx[0]
+    assert first["role"] == "system"
+    # Spot-check for known manual content.
+    assert "@-mention routing" in first["content"]
+    assert "kanban board" in first["content"]
+
+
+@pytest.mark.asyncio
+async def test_manual_lead_branch_correct_for_lead():
+    """When the recipient is a lead, the lead branch text appears."""
+    bridge = _FakeBridge()
+    state = _state_for({"name": "coord", "status": "running"}, bridge=bridge)
+    state.config.agents = [{"name": "coord", "status": "running"}]
+    from tinyagentos.chat.group_policy import GroupPolicy
+    state.group_policy = GroupPolicy()
+    router = AgentChatRouter(state)
+
+    msg = {"id": "m1", "author_id": "user", "author_type": "user",
+           "content": "@coord go", "metadata": {"hops_since_user": 0}}
+    ch = _a2a_project_channel_with_leads(["user", "coord"], leads=["coord"])
+    await router._route(msg, ch)
+
+    _, enqueued = bridge.calls[0]
+    manual = enqueued["context"][0]["content"]
+    assert "You ARE designated lead" in manual
+    assert "You are NOT a lead" not in manual
+
+
+@pytest.mark.asyncio
+async def test_manual_non_lead_branch_correct_for_worker():
+    """When the recipient is not a lead, the non-lead branch text appears."""
+    bridge = _FakeBridge()
+    state = _state_for({"name": "worker", "status": "running"}, bridge=bridge)
+    state.config.agents = [{"name": "worker", "status": "running"}]
+    from tinyagentos.chat.group_policy import GroupPolicy
+    state.group_policy = GroupPolicy()
+    router = AgentChatRouter(state)
+
+    msg = {"id": "m1", "author_id": "user", "author_type": "user",
+           "content": "@worker do it", "metadata": {"hops_since_user": 0}}
+    ch = _a2a_project_channel_with_leads(["user", "worker"], leads=["coord"])
+    await router._route(msg, ch)
+
+    _, enqueued = bridge.calls[0]
+    manual = enqueued["context"][0]["content"]
+    assert "You are NOT a lead" in manual
+    assert "You ARE designated lead" not in manual
