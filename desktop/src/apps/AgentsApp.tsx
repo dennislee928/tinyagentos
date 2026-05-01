@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { Bot, Box, Plus, Trash2, ScrollText, Play, Server, X, ChevronRight, ChevronLeft, Check, Wrench, MessageSquare, PauseCircle, RotateCcw, Archive, HardDrive } from "lucide-react";
@@ -130,6 +130,7 @@ function AgentRow({
   onViewMessages,
   onDelete,
   onResume,
+  leftActions,
 }: {
   agent: Agent;
   diskState?: DiskState | null;
@@ -139,6 +140,7 @@ function AgentRow({
   onViewMessages: (name: string) => void;
   onDelete: (name: string) => void;
   onResume: (name: string) => void;
+  leftActions?: ReactNode;
 }) {
   const isMobile = useIsMobile();
   const emoji = resolveAgentEmoji(agent.emoji, agent.framework);
@@ -272,8 +274,13 @@ function AgentRow({
           </div>
         )}
         {/* Row 3: action buttons */}
-        <div className="flex items-center gap-0 mt-1 -ml-1.5">
-          {actionButtons}
+        <div className="flex items-center justify-between mt-1 -ml-1.5">
+          <div className="flex items-center gap-0">
+            {leftActions}
+          </div>
+          <div className="flex items-center gap-0">
+            {actionButtons}
+          </div>
         </div>
       </Card>
     );
@@ -343,6 +350,7 @@ function AgentRow({
         {agent.vectors.toLocaleString()}
       </span>
       <div className="flex items-center gap-1">
+        {leftActions}
         {actionButtons}
       </div>
     </Card>
@@ -2022,22 +2030,18 @@ export function AgentsApp({ windowId: _windowId }: { windowId: string }) {
               })}
             <div className="space-y-2" role="list" aria-label="Agent list">
               {agents.map((agent) => (
-                <div key={agent.name}>
-                  <AgentRow
-                    agent={agent}
-                    diskState={diskStates[agent.name] ?? null}
-                    latestByFramework={latestByFramework}
-                    onViewLogs={(name) => setDetail({ name, tab: "logs" })}
-                    onViewSkills={(name) => setDetail({ name, tab: "skills" })}
-                    onViewMessages={(name) => setDetail({ name, tab: "messages" })}
-                    onDelete={handleDelete}
-                    onResume={handleResume}
-                  />
-                  <AgentShortcutRow
-                    agentId={agent.name}
-                    onLaunch={handleShortcutLaunch}
-                  />
-                </div>
+                <AgentRow
+                  key={agent.name}
+                  agent={agent}
+                  diskState={diskStates[agent.name] ?? null}
+                  latestByFramework={latestByFramework}
+                  onViewLogs={(name) => setDetail({ name, tab: "logs" })}
+                  onViewSkills={(name) => setDetail({ name, tab: "skills" })}
+                  onViewMessages={(name) => setDetail({ name, tab: "messages" })}
+                  onDelete={handleDelete}
+                  onResume={handleResume}
+                  leftActions={<AgentShortcutRow agentId={agent.name} onLaunch={handleShortcutLaunch} btnCls="h-11 w-11 md:h-8 md:w-8" />}
+                />
               ))}
             </div>
             <ArchivedAgentsPanel
