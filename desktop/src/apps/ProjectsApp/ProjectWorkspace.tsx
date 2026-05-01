@@ -51,7 +51,7 @@ export function ProjectWorkspace({ project, onChanged }: { project: Project; onC
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/auth/me")
+    fetch("/auth/me")
       .then((r) => (r.ok ? r.json() : null))
       .then((u) => { if (!cancelled) { if (u?.user?.id) setCurrentUserId(u.user.id); setAuthResolved(true); } })
       .catch(() => { if (!cancelled) setAuthResolved(true); });
