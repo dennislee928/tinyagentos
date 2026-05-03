@@ -1,0 +1,237 @@
+/**
+ * BrowserApp v2 — Zustand store for browser window/tab state.
+ *
+ * One entry per browser window, keyed by windowId (which matches
+ * process-store's window id). Holds tabs/activeTab/profile/discard
+ * state plus a per-window recently-closed graveyard (max 50).
+ *
+ * Persistence is handled separately by `use-session-persistence.ts`
+ * via debounced PUT to /api/desktop/browser/windows.
+ */
+import { create } from "zustand";
+import type {
+  BrowserWindowState,
+  RecentlyClosedTab,
+  Tab,
+} from "@/apps/BrowserApp/types";
+
+const NEW_TAB_URL = "about:blank";
+const MAX_RECENTLY_CLOSED = 50;
+
+let _tabIdCounter = 0;
+function nextTabId(): string {
+  _tabIdCounter += 1;
+  return `tab-${Date.now()}-${_tabIdCounter}`;
+}
+
+function makeTab(url: string = NEW_TAB_URL): Tab {
+  return {
+    id: nextTabId(),
+    url,
+    title: "",
+    pinned: false,
+    history: url ? [url] : [],
+    historyIndex: url ? 0 : -1,
+    scrollY: 0,
+    zoom: 1.0,
+    state: "live",
+    lastActiveAt: Date.now(),
+  };
+}
+
+interface BrowserStore {
+  windows: Record<string, BrowserWindowState>;
+
+  // Window lifecycle
+  createWindow: (windowId: string, profileId: string) => void;
+  removeWindow: (windowId: string) => void;
+  getWindow: (windowId: string) => BrowserWindowState | undefined;
+
+  // Tab lifecycle
+  addTab: (windowId: string, url?: string) => string;
+  closeTab: (windowId: string, tabId: string) => void;
+  setActiveTab: (windowId: string, tabId: string) => void;
+  pinTab: (windowId: string, tabId: string) => void;
+  unpinTab: (windowId: string, tabId: string) => void;
+
+  // Navigation
+  navigateTab: (windowId: string, tabId: string, url: string) => void;
+  goBack: (windowId: string, tabId: string) => void;
+  goForward: (windowId: string, tabId: string) => void;
+
+  // Discard policy
+  markTabDiscarded: (windowId: string, tabId: string) => void;
+  markTabLive: (windowId: string, tabId: string) => void;
+}
+
+export const useBrowserStore = create<BrowserStore>((set, get) => ({
+  windows: {},
+
+  createWindow(windowId, profileId) {
+    set((s) => {
+      if (s.windows[windowId]) return s; // idempotent
+      const initialTab = makeTab();
+      const win: BrowserWindowState = {
+        windowId,
+        profileId,
+        tabs: [initialTab],
+        activeTabId: initialTab.id,
+        recentlyClosed: [],
+      };
+      return { windows: { ...s.windows, [windowId]: win } };
+    });
+  },
+
+  removeWindow(windowId) {
+    set((s) => {
+      const next = { ...s.windows };
+      delete next[windowId];
+      return { windows: next };
+    });
+  },
+
+  getWindow(windowId) {
+    return get().windows[windowId];
+  },
+
+  addTab(windowId, url = NEW_TAB_URL) {
+    const tab = makeTab(url);
+    set((s) => {
+      const win = s.windows[windowId];
+      if (!win) return s;
+      const updated: BrowserWindowState = {
+        ...win,
+        tabs: [...win.tabs, tab],
+        activeTabId: tab.id,
+      };
+      return { windows: { ...s.windows, [windowId]: updated } };
+    });
+    return tab.id;
+  },
+
+  closeTab(windowId, tabId) {
+    set((s) => {
+      const win = s.windows[windowId];
+      if (!win) return s;
+
+      const closingIdx = win.tabs.findIndex((t) => t.id === tabId);
+      if (closingIdx === -1) return s;
+
+      const closing = win.tabs[closingIdx];
+
+      // Capture into recently-closed
+      const closedEntry: RecentlyClosedTab = {
+        url: closing.url,
+        title: closing.title,
+        closedAt: Date.now(),
+      };
+
+      const remainingTabs = win.tabs.filter((_, i) => i !== closingIdx);
+
+      // If that was the last tab, replace with a fresh new-tab page
+      const tabsAfter = remainingTabs.length === 0 ? [makeTab()] : remainingTabs;
+
+      // Determine new active tab if we just closed the active one
+      let newActiveId = win.activeTabId;
+      if (win.activeTabId === tabId) {
+        if (remainingTabs.length === 0) {
+          // tabsAfter has the fresh replacement
+          newActiveId = tabsAfter[0].id;
+        } else {
+          // Activate the tab to the LEFT (next-by-index when right-of removed
+          // is also fine; pick by index clamped to remainingTabs)
+          const newIdx = Math.min(closingIdx, remainingTabs.length - 1);
+          newActiveId = remainingTabs[newIdx].id;
+        }
+      }
+
+      const updated: BrowserWindowState = {
+        ...win,
+        tabs: tabsAfter,
+        activeTabId: newActiveId,
+        recentlyClosed: [closedEntry, ...win.recentlyClosed].slice(0, MAX_RECENTLY_CLOSED),
+      };
+      return { windows: { ...s.windows, [windowId]: updated } };
+    });
+  },
+
+  setActiveTab(windowId, tabId) {
+    set((s) => {
+      const win = s.windows[windowId];
+      if (!win) return s;
+      const exists = win.tabs.some((t) => t.id === tabId);
+      if (!exists) return s;
+      const updated = {
+        ...win,
+        activeTabId: tabId,
+        tabs: win.tabs.map((t) =>
+          t.id === tabId ? { ...t, lastActiveAt: Date.now() } : t,
+        ),
+      };
+      return { windows: { ...s.windows, [windowId]: updated } };
+    });
+  },
+
+  pinTab(windowId, tabId) {
+    set((s) => updateTab(s, windowId, tabId, (t) => ({ ...t, pinned: true })));
+  },
+
+  unpinTab(windowId, tabId) {
+    set((s) => updateTab(s, windowId, tabId, (t) => ({ ...t, pinned: false })));
+  },
+
+  navigateTab(windowId, tabId, url) {
+    set((s) => updateTab(s, windowId, tabId, (t) => {
+      // Truncate forward history when navigating from a back state
+      const trimmedHistory = t.history.slice(0, t.historyIndex + 1);
+      const newHistory = [...trimmedHistory, url];
+      return {
+        ...t,
+        url,
+        history: newHistory,
+        historyIndex: newHistory.length - 1,
+        state: "live",
+        lastActiveAt: Date.now(),
+      };
+    }));
+  },
+
+  goBack(windowId, tabId) {
+    set((s) => updateTab(s, windowId, tabId, (t) => {
+      if (t.historyIndex <= 0) return t;
+      const newIdx = t.historyIndex - 1;
+      return { ...t, historyIndex: newIdx, url: t.history[newIdx] };
+    }));
+  },
+
+  goForward(windowId, tabId) {
+    set((s) => updateTab(s, windowId, tabId, (t) => {
+      if (t.historyIndex >= t.history.length - 1) return t;
+      const newIdx = t.historyIndex + 1;
+      return { ...t, historyIndex: newIdx, url: t.history[newIdx] };
+    }));
+  },
+
+  markTabDiscarded(windowId, tabId) {
+    set((s) => updateTab(s, windowId, tabId, (t) => ({ ...t, state: "discarded" })));
+  },
+
+  markTabLive(windowId, tabId) {
+    set((s) => updateTab(s, windowId, tabId, (t) => ({
+      ...t, state: "live", lastActiveAt: Date.now(),
+    })));
+  },
+}));
+
+// Helper: produce updated state with a tab transform applied
+function updateTab(
+  s: { windows: Record<string, BrowserWindowState> },
+  windowId: string,
+  tabId: string,
+  transform: (t: Tab) => Tab,
+) {
+  const win = s.windows[windowId];
+  if (!win) return s;
+  const tabs = win.tabs.map((t) => (t.id === tabId ? transform(t) : t));
+  return { windows: { ...s.windows, [windowId]: { ...win, tabs } } };
+}
