@@ -49,8 +49,15 @@ async def proxy_get(
     try:
         validate_url_or_raise(url)
     except SsrfBlockedError as e:
+        # Log the detailed reason server-side for debugging, but DO NOT
+        # echo it to the client — the message can include resolved IPs
+        # that would help a remote attacker enumerate the user's LAN.
+        import logging
+        logging.getLogger(__name__).info(
+            "browser proxy SSRF block: url=%r reason=%s", url, e
+        )
         return JSONResponse(
-            {"error": f"URL blocked: {e}"},
+            {"error": "URL blocked"},
             status_code=403,
         )
 

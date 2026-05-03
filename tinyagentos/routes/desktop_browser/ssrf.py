@@ -43,6 +43,7 @@ _BLOCKED_TLDS = (".local", ".onion", ".internal")
 # reachable on typical home networks / shared infrastructure.
 _BLOCKED_NETWORKS = (
     ipaddress.ip_network("100.64.0.0/10"),  # RFC 6598 CGNAT — common on consumer ISPs
+    ipaddress.ip_network("fec0::/10"),      # RFC 3879 deprecated IPv6 site-local — still on legacy gear
 )
 
 

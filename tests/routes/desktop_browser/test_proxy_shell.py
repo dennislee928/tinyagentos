@@ -57,6 +57,30 @@ class TestSsrfGate:
         body = resp.json()
         assert "error" in body
 
+    async def test_403_response_does_not_leak_resolved_ip(self, client):
+        """Defence against LAN enumeration via DNS-pinned hostnames.
+
+        A remote attacker who controls a hostname can DNS-pin it to
+        arbitrary internal IPs. The 403 response body must not echo the
+        resolved IP back, or the attacker can read internal LAN topology.
+        """
+        from unittest.mock import patch
+
+        # Resolve a controlled hostname to an internal IP we shouldn't reveal
+        with patch(
+            "tinyagentos.routes.desktop_browser.ssrf.socket.gethostbyname_ex",
+            return_value=("evil.test", [], ["192.168.42.99"]),
+        ):
+            resp = await client.get(
+                "/api/desktop/browser/proxy",
+                params={"profile_id": "personal", "url": "http://evil.test/"},
+            )
+
+        assert resp.status_code == 403
+        body = resp.json()
+        assert "192.168.42.99" not in str(body)
+        assert "192.168" not in str(body)  # cover variants
+
 
 @pytest.mark.asyncio
 class TestParameterValidation:

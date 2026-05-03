@@ -34,6 +34,16 @@ _DIRECTIVES = (
     "style-src 'self' 'unsafe-inline' data:",
     # No inline JS, no eval. All JS must be served from us (the proxy).
     "script-src 'self'",
+    # Explicit `connect-src` so XHR/fetch/EventSource/WebSocket from
+    # proxied JS can only reach the proxy origin (us). Browser fallback
+    # to default-src for connect-src has historically been inconsistent.
+    "connect-src 'self'",
+    # Explicit `worker-src` blocks proxied pages from registering
+    # service workers / web workers pointing at third-party origins.
+    "worker-src 'self'",
+    # Explicit `frame-src` so proxied pages can only iframe other
+    # proxied content (sub-frames also routed through us).
+    "frame-src 'self'",
     # object-src is set explicitly because browser fallback to default-src
     # is inconsistent across versions. Block all plugin embeds (Flash,
     # Java, legacy <object> tags) regardless of source.

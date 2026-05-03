@@ -69,6 +69,31 @@ class TestProxiedResponseCsp:
         csp = proxied_response_csp()
         assert "base-uri 'self'" in csp
 
+    def test_locks_connect_src_to_self(self):
+        """connect-src 'self' so proxied JS XHR/fetch/EventSource/WebSocket
+        can only reach the proxy origin (us). Browser fallback for
+        connect-src has historically been inconsistent."""
+        from tinyagentos.routes.desktop_browser.csp import proxied_response_csp
+
+        csp = proxied_response_csp()
+        assert "connect-src 'self'" in csp
+
+    def test_locks_worker_src_to_self(self):
+        """worker-src 'self' blocks proxied pages from registering
+        service workers / web workers at third-party origins."""
+        from tinyagentos.routes.desktop_browser.csp import proxied_response_csp
+
+        csp = proxied_response_csp()
+        assert "worker-src 'self'" in csp
+
+    def test_locks_frame_src_to_self(self):
+        """frame-src 'self' so proxied pages can only iframe other
+        proxied content (sub-frames also routed through us)."""
+        from tinyagentos.routes.desktop_browser.csp import proxied_response_csp
+
+        csp = proxied_response_csp()
+        assert "frame-src 'self'" in csp
+
     def test_no_dangling_directive_separator(self):
         from tinyagentos.routes.desktop_browser.csp import proxied_response_csp
 

@@ -58,6 +58,8 @@ class TestPrivateAddressRejection:
         "ff02::1",        # multicast
         "::ffff:127.0.0.1",  # IPv4-mapped loopback
         "::ffff:10.0.0.1",   # IPv4-mapped RFC1918
+        "fec0::1",        # RFC 3879 deprecated site-local (still on legacy gear)
+        "feff::1",        # end of fec0::/10 range
     ])
     def test_rejects_ipv6_blocklisted(self, addr):
         from tinyagentos.routes.desktop_browser.ssrf import (
