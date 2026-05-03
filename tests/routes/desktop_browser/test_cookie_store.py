@@ -146,3 +146,42 @@ class TestCookieStoreCRUD:
     async def test_get_cookies_requires_user_id(self, cookie_store):
         with pytest.raises(ValueError, match="user_id"):
             await cookie_store.get_cookies(user_id="", profile_id="p1", host="x.test")
+
+    async def test_expired_cookie_not_returned(self, cookie_store):
+        """Expired cookies must be filtered out of get_cookies results."""
+        await cookie_store.set_cookie(
+            user_id="u1", profile_id="p1",
+            host="x.test", path="/", name="old", value="stale",
+            expires_at=1,  # 1970 — long expired
+            http_only=False, secure=False, same_site=None,
+        )
+        await cookie_store.set_cookie(
+            user_id="u1", profile_id="p1",
+            host="x.test", path="/", name="fresh", value="ok",
+            expires_at=None,  # session cookie, no expiry
+            http_only=False, secure=False, same_site=None,
+        )
+
+        cookies = await cookie_store.get_cookies(
+            user_id="u1", profile_id="p1", host="x.test",
+        )
+        names = {c["name"] for c in cookies}
+        assert "fresh" in names
+        assert "old" not in names
+
+    async def test_delete_cookie_removes_row(self, cookie_store):
+        await cookie_store.set_cookie(
+            user_id="u1", profile_id="p1",
+            host="x.test", path="/", name="sid", value="v",
+            expires_at=None, http_only=False, secure=False, same_site=None,
+        )
+
+        await cookie_store.delete_cookie(
+            user_id="u1", profile_id="p1",
+            host="x.test", path="/", name="sid",
+        )
+
+        result = await cookie_store.get_cookies(
+            user_id="u1", profile_id="p1", host="x.test",
+        )
+        assert result == []

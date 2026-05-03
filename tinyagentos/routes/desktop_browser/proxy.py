@@ -52,6 +52,7 @@ _logger = logging.getLogger(__name__)
 _MAX_REDIRECTS = 5
 _FETCH_TIMEOUT = 15.0   # seconds — total deadline including all redirect hops
 _HOP_TIMEOUT = 5.0      # seconds — per-operation (connect + read) limit per hop
+_MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MB hard cap
 
 # Headers we strip from upstream responses before returning to the client.
 _STRIP_RESPONSE_HEADERS = frozenset({
@@ -178,6 +179,15 @@ async def proxy_get(
         out_headers[k] = v
 
     content_type = response.headers.get("content-type", "")
+
+    if len(response.content) > _MAX_RESPONSE_BYTES:
+        _logger.info(
+            "browser proxy response too large: bytes=%d limit=%d",
+            len(response.content), _MAX_RESPONSE_BYTES,
+        )
+        return JSONResponse(
+            {"error": "response too large"}, status_code=502,
+        )
 
     if "text/html" in content_type:
         # Rewrite + inject for HTML

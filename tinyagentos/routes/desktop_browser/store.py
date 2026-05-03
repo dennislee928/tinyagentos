@@ -180,8 +180,10 @@ class BrowserCookieStore:
                     "SELECT host, path, name, value, expires_at, "
                     "       http_only, secure, same_site "
                     "FROM cookies "
-                    "WHERE user_id = ? AND profile_id = ? AND host = ?",
-                    (user_id, profile_id, host),
+                    "WHERE user_id = ? AND profile_id = ? "
+                    "  AND (host = ? OR ? LIKE '%.' || host) "
+                    "  AND (expires_at IS NULL OR expires_at > strftime('%s', 'now'))",
+                    (user_id, profile_id, host, host),
                 )
                 rows = cursor.fetchall()
                 return [
@@ -201,3 +203,35 @@ class BrowserCookieStore:
                 conn.close()
 
         return await asyncio.get_running_loop().run_in_executor(None, _do)
+
+    async def delete_cookie(
+        self,
+        *,
+        user_id: str,
+        profile_id: str,
+        host: str,
+        path: str,
+        name: str,
+    ) -> None:
+        """Delete a specific cookie by its full primary key."""
+        if not user_id:
+            raise ValueError("user_id is required")
+        if not profile_id:
+            raise ValueError("profile_id is required")
+
+        import asyncio
+
+        def _do() -> None:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    "DELETE FROM cookies "
+                    "WHERE user_id = ? AND profile_id = ? "
+                    "  AND host = ? AND path = ? AND name = ?",
+                    (user_id, profile_id, host, path, name),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        await asyncio.get_running_loop().run_in_executor(None, _do)

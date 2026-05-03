@@ -67,17 +67,32 @@ async def persist_response_cookies(
     if not profile_id:
         raise ValueError("profile_id is required")
 
+    import time
+    now = int(time.time())
+
     for cookie in response_cookies.jar:
         # httpx.Cookies wraps stdlib http.cookiejar.Cookie. Some attributes
         # vary across Python versions; we extract the safe minimum.
+        host = (cookie.domain or "").lstrip(".")
+        path = cookie.path or "/"
+        expires_at = int(cookie.expires) if cookie.expires is not None else None
+
+        # Server explicitly deleting the cookie via past-dated expiry?
+        if expires_at is not None and expires_at <= now:
+            await cookie_store.delete_cookie(
+                user_id=user_id, profile_id=profile_id,
+                host=host, path=path, name=cookie.name,
+            )
+            continue
+
         await cookie_store.set_cookie(
             user_id=user_id,
             profile_id=profile_id,
-            host=(cookie.domain or "").lstrip("."),
-            path=cookie.path or "/",
+            host=host,
+            path=path,
             name=cookie.name,
             value=cookie.value or "",
-            expires_at=int(cookie.expires) if cookie.expires else None,
+            expires_at=expires_at,
             http_only=False,  # stdlib cookie jar parsing here doesn't reliably
                               # surface HttpOnly; the proxy will set it
                               # correctly via the response-header path

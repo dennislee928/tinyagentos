@@ -175,3 +175,30 @@ class TestStaticAssets:
         assert resp.status_code == 200
         assert "javascript" in resp.headers.get("content-type", "").lower()
         assert b"taos-copilot" in resp.content
+
+
+@pytest.mark.asyncio
+class TestResponseSizeCap:
+    @respx.mock
+    async def test_oversized_response_returns_502(self, client):
+        oversized = b"X" * (11 * 1024 * 1024)  # 11 MB > 10 MB cap
+        respx.get("http://example.com/big").mock(
+            return_value=Response(
+                200,
+                content=oversized,
+                headers={"content-type": "application/octet-stream"},
+            )
+        )
+
+        with patch(
+            "tinyagentos.routes.desktop_browser.ssrf.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+        ):
+            resp = await client.get(
+                "/api/desktop/browser/proxy",
+                params={"profile_id": "personal", "url": "http://example.com/big"},
+            )
+
+        assert resp.status_code == 502
+        body = resp.json()
+        assert "too large" in body.get("error", "").lower()

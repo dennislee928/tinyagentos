@@ -149,3 +149,82 @@ class TestPersistResponseCookies:
         cookies = list(jar.jar)
         assert any(c.name == "sid" and c.value == "logged-in-token" for c in cookies), \
             "leading-dot domain bug regression — cookie not retrievable by dot-less hostname"
+
+    async def test_persisting_zero_expiry_deletes_cookie(self, cookie_store):
+        """RFC 6265 / cookielib: server sends expires=0 (or past-dated)
+        to indicate the cookie should be deleted on the client."""
+        from tinyagentos.routes.desktop_browser.cookie_jar import (
+            load_jar_for_request,
+            persist_response_cookies,
+        )
+        from http.cookiejar import Cookie
+
+        # First, install a cookie
+        existing = httpx.Cookies()
+        existing.jar.set_cookie(Cookie(
+            version=0, name="sid", value="logged-in",
+            port=None, port_specified=False,
+            domain="x.test", domain_specified=True, domain_initial_dot=False,
+            path="/", path_specified=True,
+            secure=False, expires=None, discard=False,
+            comment=None, comment_url=None, rest={}, rfc2109=False,
+        ))
+        await persist_response_cookies(
+            cookie_store, existing, user_id="u1", profile_id="personal",
+        )
+
+        # Now simulate the logout response — same cookie name, expires=0
+        deletion = httpx.Cookies()
+        deletion.jar.set_cookie(Cookie(
+            version=0, name="sid", value="",
+            port=None, port_specified=False,
+            domain="x.test", domain_specified=True, domain_initial_dot=False,
+            path="/", path_specified=True,
+            secure=False, expires=0, discard=False,
+            comment=None, comment_url=None, rest={}, rfc2109=False,
+        ))
+        await persist_response_cookies(
+            cookie_store, deletion, user_id="u1", profile_id="personal",
+        )
+
+        # Cookie must be gone
+        jar = await load_jar_for_request(
+            cookie_store, user_id="u1", profile_id="personal", host="x.test",
+        )
+        assert len(list(jar.jar)) == 0
+
+
+@pytest.mark.asyncio
+class TestSubdomainCookieCascade:
+    async def test_loads_parent_domain_cookie_for_subdomain_request(self, cookie_store):
+        """RFC 6265: a cookie stored for github.com must reach gist.github.com."""
+        from tinyagentos.routes.desktop_browser.cookie_jar import load_jar_for_request
+
+        await cookie_store.set_cookie(
+            user_id="u1", profile_id="personal",
+            host="github.com", path="/", name="user_session", value="xyz",
+            expires_at=None, http_only=True, secure=True, same_site="lax",
+        )
+
+        # Request to a subdomain must get the parent-domain cookie
+        jar = await load_jar_for_request(
+            cookie_store, user_id="u1", profile_id="personal", host="gist.github.com",
+        )
+        cookies = list(jar.jar)
+        assert any(c.name == "user_session" and c.value == "xyz" for c in cookies)
+
+    async def test_subdomain_cookie_does_not_leak_to_parent(self, cookie_store):
+        """Reverse direction: a cookie scoped to gist.github.com must NOT
+        be sent on requests to github.com."""
+        from tinyagentos.routes.desktop_browser.cookie_jar import load_jar_for_request
+
+        await cookie_store.set_cookie(
+            user_id="u1", profile_id="personal",
+            host="gist.github.com", path="/", name="gist_session", value="g-xyz",
+            expires_at=None, http_only=True, secure=True, same_site="lax",
+        )
+
+        jar = await load_jar_for_request(
+            cookie_store, user_id="u1", profile_id="personal", host="github.com",
+        )
+        assert len(list(jar.jar)) == 0

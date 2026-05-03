@@ -94,6 +94,45 @@ from tinyagentos.frameworks import FRAMEWORKS, FrameworkManifestError, validate_
 PROJECT_DIR = Path(__file__).parent.parent
 
 
+def _resolve_browser_cookie_key(data_dir: "Path") -> str:
+    """Resolve the SQLCipher key for the browser cookie store.
+
+    Precedence:
+      1. TAOS_BROWSER_COOKIE_KEY_HEX env var (must be 64 hex chars) — for
+         recovery / pinned-key deployments.
+      2. data_dir / "browser_cookie_key.hex" — read existing per-install
+         random key, or create a new one with secrets.token_hex(32) if
+         absent. File is mode 0o600.
+
+    Returns a 64-char hex string suitable for BrowserCookieStore(key_hex=…).
+    """
+    import os
+    import secrets
+
+    env_key = os.environ.get("TAOS_BROWSER_COOKIE_KEY_HEX", "").strip()
+    if env_key:
+        if len(env_key) != 64:
+            raise RuntimeError(
+                "TAOS_BROWSER_COOKIE_KEY_HEX must be exactly 64 hex chars"
+            )
+        return env_key
+
+    key_path = data_dir / "browser_cookie_key.hex"
+    if key_path.exists():
+        return key_path.read_text(encoding="utf-8").strip()
+
+    new_key = secrets.token_hex(32)  # 256 bits
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    key_path.write_text(new_key, encoding="utf-8")
+    try:
+        os.chmod(key_path, 0o600)
+    except OSError:
+        # On Windows / non-POSIX this is a no-op; the env-var path is
+        # the recommended fallback there.
+        pass
+    return new_key
+
+
 def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) -> FastAPI:
     from tinyagentos.registry import AppRegistry
     from tinyagentos.hardware import get_hardware_profile
@@ -291,21 +330,15 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
         await archive.init()
         app.state.archive = archive
 
-        # BrowserApp v2 stores. Cookie store key is currently a
-        # process-wide placeholder; per-user Argon2 derivation from the
-        # login password lands when auth integration catches up (PR 5+).
+        # BrowserApp v2 stores. Cookie store uses a per-install random
+        # key persisted in data_dir; PR 5+ will replace this with a
+        # per-user Argon2-derived key bound to the login password.
         #
-        # MIGRATION HAZARD: when PR 5+ swaps this placeholder key for the
-        # per-user Argon2-derived key, SQLCipher will reject the existing
-        # browser_cookies.sqlite3 ("encrypted or not a database") because
-        # the key changes. PR 5+ MUST either:
-        #   (a) Detect placeholder-keyed databases (e.g. via a marker
-        #       file) and call PRAGMA rekey to re-encrypt with the
-        #       per-user key, or
-        #   (b) Wipe browser_cookies.sqlite3 on first per-user-key boot,
-        #       accepting the one-time logout for early adopters.
-        # Without one of these, every existing user's persisted cookies
-        # become unreadable garbage on PR 5 deploy.
+        # The key file is created with mode 0o600 (owner read/write only).
+        # Override via TAOS_BROWSER_COOKIE_KEY_HEX env var for recovery
+        # (must be 64 hex chars). PR 5+ migration will need to either
+        # call PRAGMA rekey to re-encrypt existing DB with the per-user
+        # key, or wipe browser_cookies.sqlite3 and accept one-time logout.
         from tinyagentos.routes.desktop_browser.store import (
             BrowserStore,
             BrowserCookieStore,
@@ -314,10 +347,10 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
         await browser_store.init()
         app.state.browser_store = browser_store
 
-        _placeholder_cookie_key = "0" * 64
+        cookie_key_hex = _resolve_browser_cookie_key(data_dir)
         browser_cookie_store = BrowserCookieStore(
             data_dir / "browser_cookies.sqlite3",
-            key_hex=_placeholder_cookie_key,
+            key_hex=cookie_key_hex,
         )
         await browser_cookie_store.init()
         app.state.browser_cookie_store = browser_cookie_store
