@@ -36,7 +36,7 @@ def app(tmp_data_dir):
 
 
 @pytest_asyncio.fixture
-async def client(app):
+async def client(app, tmp_data_dir):
     """Async test client with metrics store initialised and proper teardown."""
     store = app.state.metrics
     if store._db is not None:
@@ -108,6 +108,17 @@ async def client(app):
     if canvas_store._db is not None:
         await canvas_store.close()
     await canvas_store.init()
+    # BrowserApp v2 stores
+    from tinyagentos.routes.desktop_browser.store import BrowserStore, BrowserCookieStore
+    _browser_store = BrowserStore(tmp_data_dir / "browser.sqlite3")
+    await _browser_store.init()
+    app.state.browser_store = _browser_store
+    _browser_cookie_store = BrowserCookieStore(
+        tmp_data_dir / "browser_cookies.sqlite3",
+        key_hex="0" * 64,
+    )
+    await _browser_cookie_store.init()
+    app.state.browser_cookie_store = _browser_cookie_store
     # Auth middleware requires a configured user — set up a test admin so all
     # routes respond normally instead of returning 401 needs_onboarding.
     app.state.auth.setup_user("admin", "Test Admin", "", "testpass")
@@ -140,6 +151,8 @@ async def client(app):
     await store.close()
     await app.state.qmd_client.close()
     await app.state.http_client.aclose()
+    await _browser_store.close()
+    await _browser_cookie_store.close()
 
 
 def create_test_qmd_db(db_path):

@@ -104,22 +104,19 @@ class TestParameterValidation:
 
 @pytest.mark.asyncio
 class TestNotImplementedStub:
-    async def test_valid_request_returns_501(self, client):
-        # example.com is real and public so SSRF passes, but PR 2
-        # stubs the actual fetch to keep the deliverable focused.
+    async def test_valid_request_now_attempts_fetch(self, client):
+        # PR 2 returned 501 here; PR 3 makes the real fetch. With no
+        # network mock the request will time out / fail fetching
+        # example.com from this test environment, so we accept any
+        # non-501 response — proves the gate is letting valid URLs
+        # through to the fetch pipeline.
+        from unittest.mock import patch
         with patch(
             "tinyagentos.routes.desktop_browser.ssrf.socket.getaddrinfo",
-            return_value=[
-                (2, 1, 6, "", ("93.184.216.34", 0)),  # AF_INET
-            ],
+            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
         ):
             resp = await client.get(
                 "/api/desktop/browser/proxy",
                 params={"profile_id": "personal", "url": "http://example.com/"},
             )
-        assert resp.status_code == 501
-        body = resp.json()
-        assert "error" in body
-        # Body must mention PR 3 so anyone hitting this in early dev
-        # knows where the fetch logic actually lands.
-        assert "PR 3" in body["error"] or "not yet implemented" in body["error"].lower()
+        assert resp.status_code != 501

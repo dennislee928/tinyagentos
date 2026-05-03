@@ -290,6 +290,26 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
         app.state.knowledge_graph = knowledge_graph
         await archive.init()
         app.state.archive = archive
+
+        # BrowserApp v2 stores. Cookie store key is currently a
+        # process-wide placeholder; per-user Argon2 derivation from the
+        # login password lands when auth integration catches up (PR 5+).
+        from tinyagentos.routes.desktop_browser.store import (
+            BrowserStore,
+            BrowserCookieStore,
+        )
+        browser_store = BrowserStore(data_dir / "browser.sqlite3")
+        await browser_store.init()
+        app.state.browser_store = browser_store
+
+        _placeholder_cookie_key = "0" * 64
+        browser_cookie_store = BrowserCookieStore(
+            data_dir / "browser_cookies.sqlite3",
+            key_hex=_placeholder_cookie_key,
+        )
+        await browser_cookie_store.init()
+        app.state.browser_cookie_store = browser_cookie_store
+
         await benchmark_store.init()
         await scheduler_history_store.init()
         app.state.config = config
@@ -725,6 +745,8 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
         await scheduler.close()
         await channel_store.close()
         await relationship_mgr.close()
+        await browser_cookie_store.close()
+        await browser_store.close()
         await secrets_store.close()
         await notif_store.close()
         await metrics_store.close()
