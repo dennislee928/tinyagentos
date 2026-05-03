@@ -68,8 +68,10 @@ class TestSsrfGate:
 
         # Resolve a controlled hostname to an internal IP we shouldn't reveal
         with patch(
-            "tinyagentos.routes.desktop_browser.ssrf.socket.gethostbyname_ex",
-            return_value=("evil.test", [], ["192.168.42.99"]),
+            "tinyagentos.routes.desktop_browser.ssrf.socket.getaddrinfo",
+            return_value=[
+                (2, 1, 6, "", ("192.168.42.99", 0)),
+            ],
         ):
             resp = await client.get(
                 "/api/desktop/browser/proxy",
@@ -106,8 +108,10 @@ class TestNotImplementedStub:
         # example.com is real and public so SSRF passes, but PR 2
         # stubs the actual fetch to keep the deliverable focused.
         with patch(
-            "tinyagentos.routes.desktop_browser.ssrf.socket.gethostbyname_ex",
-            return_value=("example.com", [], ["93.184.216.34"]),
+            "tinyagentos.routes.desktop_browser.ssrf.socket.getaddrinfo",
+            return_value=[
+                (2, 1, 6, "", ("93.184.216.34", 0)),  # AF_INET
+            ],
         ):
             resp = await client.get(
                 "/api/desktop/browser/proxy",

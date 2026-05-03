@@ -25,11 +25,11 @@ _DIRECTIVES = (
     # explicitly named below.
     "default-src 'self'",
     # img-src is widened to data: so inline image data URIs (which are
-    # extremely common) work, and to https: so most images render after
-    # rewriting. Note: this is the one place we permit cross-origin —
-    # images are low-risk for data exfiltration since they're rendered
-    # not executed.
-    "img-src 'self' data: https:",
+    # extremely common) work. Cross-origin https: was previously
+    # allowed but removed — external images must be rewritten by the
+    # rewriter to flow back through the proxy. Without this, the
+    # proxied page could leak the user's real IP via direct image fetches.
+    "img-src 'self' data:",
     # Stylesheets may use data: for inline font references.
     "style-src 'self' 'unsafe-inline' data:",
     # No inline JS, no eval. All JS must be served from us (the proxy).
@@ -52,9 +52,9 @@ _DIRECTIVES = (
     # proxied page from redirecting relative URL resolution to an
     # attacker-controlled origin (which would bypass our rewriter).
     "base-uri 'self'",
-    # Fonts may come from data: (inline) or https: (after rewriting
-    # by the proxy).
-    "font-src 'self' data: https:",
+    # Fonts may come from data: (inline). External fonts must be
+    # rewritten by the proxy rewriter to flow back through the proxy.
+    "font-src 'self' data:",
     # Form submissions may not target third parties.
     "form-action 'self'",
     # Disallow anyone embedding our proxied page in their own iframe

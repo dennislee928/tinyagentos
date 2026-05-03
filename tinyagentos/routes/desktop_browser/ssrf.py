@@ -37,7 +37,15 @@ class SsrfBlockedError(Exception):
 
 
 # Hostname-suffix blocklist — applied before DNS resolution.
-_BLOCKED_TLDS = (".local", ".onion", ".internal")
+_BLOCKED_TLDS = (
+    ".local",     # mDNS / Bonjour
+    ".onion",     # Tor hidden services
+    ".internal",  # common internal alias
+    ".home",      # IETF reserved for residential networks
+    ".corp",      # common enterprise internal alias
+    ".lan",       # common home-network alias
+    ".intranet",  # common enterprise alias
+)
 
 # Networks not covered by ipaddress's `is_private` flag but still
 # reachable on typical home networks / shared infrastructure.
@@ -62,7 +70,7 @@ def validate_url_or_raise(url: str) -> None:
     if not parsed.hostname:
         raise SsrfBlockedError("URL has no hostname")
 
-    host = parsed.hostname.lower()
+    host = parsed.hostname.strip().lower()
 
     # Hostname-based blocklist (catches .local / .onion / .internal
     # before we even resolve DNS, since these may not resolve at all
@@ -90,10 +98,15 @@ def validate_url_or_raise(url: str) -> None:
         if encoded is not None:
             addrs = [encoded]
         else:
-            # Real DNS resolution
+            # Real DNS resolution. We use getaddrinfo (NOT gethostbyname_ex)
+            # because the latter is IPv4-only — it silently ignores AAAA
+            # records, which would let an attacker DNS-pin a hostname to
+            # one public IPv4 + one private IPv6 and bypass the guard.
             try:
-                _hostname, _aliases, addr_list = socket.gethostbyname_ex(host)
-                addrs = list(addr_list)
+                results = socket.getaddrinfo(host, None)
+                # results is a list of (family, type, proto, canonname, sockaddr).
+                # sockaddr[0] is the address string for both AF_INET and AF_INET6.
+                addrs = list({r[4][0] for r in results})
             except socket.gaierror as e:
                 raise SsrfBlockedError(f"could not resolve hostname: {e}") from e
 

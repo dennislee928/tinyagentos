@@ -22,8 +22,10 @@ class TestUrlScheme:
 
         # Public IPs resolve fine and pass — using example.com which is RFC 2606
         with patch(
-            "tinyagentos.routes.desktop_browser.ssrf.socket.gethostbyname_ex",
-            return_value=("example.com", [], ["93.184.216.34"]),
+            "tinyagentos.routes.desktop_browser.ssrf.socket.getaddrinfo",
+            return_value=[
+                (2, 1, 6, "", ("93.184.216.34", 0)),  # AF_INET
+            ],
         ):
             validate_url_or_raise("http://example.com/")
             validate_url_or_raise("https://example.com/")
@@ -87,8 +89,12 @@ class TestHostnameRejection:
         "anything.local",
         "host.onion",
         "deeper.subdomain.local",
+        "router.home",
+        "wiki.corp",
+        "nas.lan",
+        "mail.intranet",
     ])
-    def test_rejects_local_and_onion_tlds(self, host):
+    def test_rejects_internal_network_tlds(self, host):
         from tinyagentos.routes.desktop_browser.ssrf import (
             SsrfBlockedError,
             validate_url_or_raise,
@@ -140,7 +146,7 @@ class TestDnsResolutionFailure:
         import socket
 
         with patch(
-            "tinyagentos.routes.desktop_browser.ssrf.socket.gethostbyname_ex",
+            "tinyagentos.routes.desktop_browser.ssrf.socket.getaddrinfo",
             side_effect=socket.gaierror("name resolution failed"),
         ):
             with pytest.raises(SsrfBlockedError, match="resolve"):
@@ -160,8 +166,28 @@ class TestDnsResolutionFailure:
         )
 
         with patch(
-            "tinyagentos.routes.desktop_browser.ssrf.socket.gethostbyname_ex",
-            return_value=("evil.test", [], ["8.8.8.8", "127.0.0.1"]),
+            "tinyagentos.routes.desktop_browser.ssrf.socket.getaddrinfo",
+            return_value=[
+                (2, 1, 6, "", ("8.8.8.8", 0)),
+                (2, 1, 6, "", ("127.0.0.1", 0)),
+            ],
         ):
             with pytest.raises(SsrfBlockedError):
                 validate_url_or_raise("http://evil.test/")
+
+    def test_rejects_when_only_ipv6_resolves_to_private(self):
+        """Defends against DNS records that mix public IPv4 with private IPv6."""
+        from tinyagentos.routes.desktop_browser.ssrf import (
+            SsrfBlockedError,
+            validate_url_or_raise,
+        )
+
+        with patch(
+            "tinyagentos.routes.desktop_browser.ssrf.socket.getaddrinfo",
+            return_value=[
+                (2, 1, 6, "", ("8.8.8.8", 0)),         # public IPv4
+                (10, 1, 6, "", ("::1", 0, 0, 0)),       # private IPv6 (loopback)
+            ],
+        ):
+            with pytest.raises(SsrfBlockedError):
+                validate_url_or_raise("http://dual-stack.test/")

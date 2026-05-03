@@ -53,8 +53,13 @@ async def proxy_get(
         # echo it to the client — the message can include resolved IPs
         # that would help a remote attacker enumerate the user's LAN.
         import logging
+        from urllib.parse import urlsplit
+        parsed = urlsplit(url)
         logging.getLogger(__name__).info(
-            "browser proxy SSRF block: url=%r reason=%s", url, e
+            "browser proxy SSRF block: scheme=%r host=%r reason=%s",
+            parsed.scheme,
+            parsed.hostname,
+            e,
         )
         return JSONResponse(
             {"error": "URL blocked"},
