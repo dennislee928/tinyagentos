@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import aiosqlite
-
 from tinyagentos.base_store import BaseStore
 from tinyagentos.routes.desktop_browser.schema import BROWSER_SCHEMA
 
