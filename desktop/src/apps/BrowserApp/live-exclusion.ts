@@ -23,11 +23,14 @@ export function detectLiveExclusion(
   if (!doc) return undefined; // navigation in progress, or cross-origin
 
   // Audio / video playing
+  // Use the iframe's own HTMLVideoElement for instanceof — this works for
+  // same-origin iframes in both real browsers and JSDOM.
+  const iframeWin = iframe.contentWindow as (Window & { HTMLVideoElement?: typeof HTMLVideoElement }) | null;
+  const VideoElement = iframeWin?.HTMLVideoElement ?? HTMLVideoElement;
   for (const media of Array.from(doc.querySelectorAll("video, audio"))) {
     const m = media as HTMLMediaElement;
     if (!m.paused && !m.ended) {
-      // Differentiate: HTMLVideoElement has `videoWidth` property, audio doesn't
-      if ((media as HTMLVideoElement).videoWidth !== undefined) {
+      if (media instanceof VideoElement) {
         return "video";
       }
       return "audio";

@@ -1,6 +1,8 @@
 """Tests for /api/desktop/browser/profiles full CRUD."""
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 
@@ -57,6 +59,37 @@ class TestCreateProfile:
         )).json()
         # Original "personal" exists from defaults; first POST gets "personal-2"
         assert body["profile_id"] in {"personal-2", "personal-3"}
+
+    async def test_create_retries_on_concurrent_slug_collision(self):
+        """Simulate a race: add_profile returns False on first call (slug taken by a
+        concurrent request), True on second. create_profile must retry and return
+        the suffixed slug rather than silently returning a ghost profile_id."""
+        from unittest.mock import AsyncMock
+        from tinyagentos.routes.desktop_browser.profile import create_profile
+
+        # Build a minimal mock store
+        store = AsyncMock()
+        store.list_profiles.return_value = []  # no existing profiles
+
+        add_calls: list[str] = []
+
+        async def fake_add_profile(*, user_id, profile_id, name, color, created_at):
+            add_calls.append(profile_id)
+            # First call always fails (simulate race)
+            return len(add_calls) > 1
+
+        store.add_profile.side_effect = fake_add_profile
+
+        result = await create_profile(
+            store, user_id="u1", name="Race", color="#112233",
+        )
+
+        # Must have retried (2 calls) and returned a valid profile_id
+        assert len(add_calls) == 2
+        assert result["profile_id"] is not None
+        # Both attempts were for the same base slug (list returned empty both times)
+        assert add_calls[0] == "race"
+        assert add_calls[1] == "race"
 
 
 @pytest.mark.asyncio

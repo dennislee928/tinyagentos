@@ -76,12 +76,18 @@ def extract_readable(html_bytes: bytes, url: str) -> dict[str, Any]:
 
 @router.get("/api/desktop/browser/extract")
 async def extract_endpoint(
-    profile_id: str,
+    profile_id: str,  # reserved for future per-profile caching; not yet used
     url: str,
     request: Request,
     current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008
 ):
-    """Auth + SSRF gate + fetch + Readability extract."""
+    """Auth + SSRF gate + fetch + Readability extract.
+
+    Note: profile_id is currently unused — extracts run against raw upstream
+    HTML (no cookie injection) so the result is profile-independent. The
+    parameter is reserved for future per-profile extract caching.
+    """
+    _ = profile_id
     user_id = str(current_user.get("id") or "")
     if not user_id:
         return JSONResponse({"error": "session has no user id"}, status_code=401)

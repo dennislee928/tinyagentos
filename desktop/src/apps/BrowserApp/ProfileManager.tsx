@@ -88,7 +88,7 @@ export function ProfileManager({ activeProfileId, onClose }: ProfileManagerProps
     try {
       const ok = await deleteProfile(id);
       if (!ok) {
-        setError("Delete failed (cannot delete last profile)");
+        setError("Delete failed");
         return;
       }
 

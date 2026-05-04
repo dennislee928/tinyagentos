@@ -33,18 +33,19 @@ class BrowserStore(BaseStore):
         name: str,
         color: str | None = None,
         created_at: int,
-    ) -> None:
+    ) -> bool:
         if not user_id:
             raise ValueError("user_id is required")
         if not profile_id:
             raise ValueError("profile_id is required")
         assert self._db is not None
-        await self._db.execute(
+        cursor = await self._db.execute(
             "INSERT OR IGNORE INTO profiles (user_id, profile_id, name, color, created_at) "
             "VALUES (?, ?, ?, ?, ?)",
             (user_id, profile_id, name, color, created_at),
         )
         await self._db.commit()
+        return cursor.rowcount > 0  # False = slug already taken
 
     async def list_profiles(self, *, user_id: str) -> list[dict]:
         if not user_id:

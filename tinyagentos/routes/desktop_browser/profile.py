@@ -101,7 +101,13 @@ async def create_profile(
     name: str,
     color: str | None = None,
 ) -> dict:
-    """Create a new profile with auto-slugified ID; appends -2/-3 on collision."""
+    """Create a new profile with auto-slugified ID; appends -2/-3 on collision.
+
+    Uses INSERT OR IGNORE as the authoritative collision guard — the
+    pre-check via list_profiles is a fast path only. If a concurrent
+    request took the slug between list_profiles and add_profile, the
+    INSERT returns False and we increment the suffix and retry.
+    """
     if not user_id:
         raise ValueError("user_id is required")
     name = name.strip()
@@ -109,29 +115,38 @@ async def create_profile(
         raise ValueError("name is required")
 
     base_slug = _slugify(name)
-    existing = await store.list_profiles(user_id=user_id)
-    have_ids = {p["profile_id"] for p in existing}
+    max_attempts = 100
+    for attempt in range(max_attempts):
+        # Fast-path: skip slugs that are already visible in the list.
+        existing = await store.list_profiles(user_id=user_id)
+        have_ids = {p["profile_id"] for p in existing}
+        candidate = base_slug
+        n = 2
+        while candidate in have_ids:
+            candidate = f"{base_slug}-{n}"
+            n += 1
 
-    candidate = base_slug
-    suffix = 2
-    while candidate in have_ids:
-        candidate = f"{base_slug}-{suffix}"
-        suffix += 1
+        now = int(time.time())
+        inserted = await store.add_profile(
+            user_id=user_id,
+            profile_id=candidate,
+            name=name,
+            color=color,
+            created_at=now,
+        )
+        if inserted:
+            return {
+                "profile_id": candidate,
+                "name": name,
+                "color": color,
+                "created_at": now,
+            }
+        # Race: a concurrent request took this slug between list_profiles and
+        # add_profile. Loop again — the next list_profiles call will see it.
 
-    now = int(time.time())
-    await store.add_profile(
-        user_id=user_id,
-        profile_id=candidate,
-        name=name,
-        color=color,
-        created_at=now,
+    raise RuntimeError(
+        f"could not allocate slug for name={name!r} after {max_attempts} attempts"
     )
-    return {
-        "profile_id": candidate,
-        "name": name,
-        "color": color,
-        "created_at": now,
-    }
 
 
 async def rename_profile(

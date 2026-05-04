@@ -8,9 +8,10 @@
  * `desktop/src/components/Window.tsx` — every window in taOS gets them
  * automatically. This component does NOT render its own traffic lights.
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ArrowLeft, ArrowRight, RotateCw, Settings } from "lucide-react";
 import { useBrowserStore } from "@/stores/browser-store";
+import { listProfiles, type Profile } from "@/lib/browser-profile-api";
 import { ProfileSwitcher } from "./ProfileSwitcher";
 import { ProfileManager } from "./ProfileManager";
 import { SettingsPanel } from "./SettingsPanel";
@@ -28,6 +29,17 @@ export function Chrome({ windowId }: ChromeProps) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profiles, setProfiles] = useState<Profile[] | null>(null);
+
+  const currentProfileId = win?.profileId ?? "";
+
+  useEffect(() => {
+    let cancelled = false;
+    listProfiles().then((list) => {
+      if (!cancelled) setProfiles(list);
+    });
+    return () => { cancelled = true; };
+  }, [currentProfileId]);
 
   if (!win) return null;
 
@@ -108,25 +120,32 @@ export function Chrome({ windowId }: ChromeProps) {
 
       {/* Profile chip — clicking opens the ProfileSwitcher dropdown */}
       <div className="relative">
-        <button
-          type="button"
-          onClick={() => {
-            setSettingsOpen(false);
-            setManagerOpen(false);
-            setSwitcherOpen((s) => !s);
-          }}
-          className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-shell-bg-deep border border-shell-border-subtle text-xs hover:bg-shell-hover"
-          aria-label={`Profile: ${win.profileId}`}
-          aria-haspopup="menu"
-          aria-expanded={switcherOpen}
-        >
-          <span
-            className="inline-block w-2 h-2 rounded-full"
-            style={{ backgroundColor: profileColor(win.profileId) }}
-            aria-hidden="true"
-          />
-          <span className="capitalize">{win.profileId}</span>
-        </button>
+        {(() => {
+          const activeProfile = profiles?.find((p) => p.profile_id === win.profileId);
+          const chipColor = activeProfile?.color ?? "#8b92a3";
+          const chipName = activeProfile?.name ?? win.profileId;
+          return (
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsOpen(false);
+                setManagerOpen(false);
+                setSwitcherOpen((s) => !s);
+              }}
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-shell-bg-deep border border-shell-border-subtle text-xs hover:bg-shell-hover"
+              aria-label={`Profile: ${win.profileId}`}
+              aria-haspopup="menu"
+              aria-expanded={switcherOpen}
+            >
+              <span
+                className="inline-block w-2 h-2 rounded-full"
+                style={{ backgroundColor: chipColor }}
+                aria-hidden="true"
+              />
+              <span className="capitalize">{chipName}</span>
+            </button>
+          );
+        })()}
         {switcherOpen && (
           <ProfileSwitcher
             windowId={windowId}
@@ -148,15 +167,3 @@ export function Chrome({ windowId }: ChromeProps) {
   );
 }
 
-// Default colors for the two seeded profiles. PR 5's ProfileSwitcher will
-// fetch real per-profile colors from the backend.
-function profileColor(profileId: string): string {
-  switch (profileId) {
-    case "personal":
-      return "#6c8df0";
-    case "work":
-      return "#f5b86b";
-    default:
-      return "#8b92a3";
-  }
-}
