@@ -8,7 +8,7 @@
  * `desktop/src/components/Window.tsx` — every window in taOS gets them
  * automatically. This component does NOT render its own traffic lights.
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ArrowLeft, ArrowRight, RotateCw, Settings } from "lucide-react";
 import { useBrowserStore } from "@/stores/browser-store";
 import { listProfiles, type Profile } from "@/lib/browser-profile-api";
@@ -32,6 +32,7 @@ export function Chrome({ windowId }: ChromeProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
+  const agentChipRef = useRef<HTMLButtonElement>(null);
 
   const currentProfileId = win?.profileId ?? "";
 
@@ -116,8 +117,11 @@ export function Chrome({ windowId }: ChromeProps) {
       <div className="relative">
         {activeTab.pinnedAgentIds.length === 0 ? (
           <button
+            ref={agentChipRef}
             type="button"
             aria-label="Add agent"
+            aria-haspopup="listbox"
+            aria-expanded={pickerOpen}
             onClick={() => {
               setSettingsOpen(false);
               setSwitcherOpen(false);
@@ -140,6 +144,7 @@ export function Chrome({ windowId }: ChromeProps) {
             profileId={win.profileId}
             pinnedAgentIds={activeTab.pinnedAgentIds}
             onClose={() => setPickerOpen(false)}
+            triggerRef={agentChipRef}
           />
         )}
       </div>
@@ -155,6 +160,7 @@ export function Chrome({ windowId }: ChromeProps) {
           onClick={() => {
             setSwitcherOpen(false);
             setManagerOpen(false);
+            setPickerOpen(false);
             setSettingsOpen((s) => !s);
           }}
           className="p-1 rounded hover:bg-shell-hover"
@@ -178,6 +184,7 @@ export function Chrome({ windowId }: ChromeProps) {
               onClick={() => {
                 setSettingsOpen(false);
                 setManagerOpen(false);
+                setPickerOpen(false);
                 setSwitcherOpen((s) => !s);
               }}
               className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-shell-bg-deep border border-shell-border-subtle text-xs hover:bg-shell-hover"

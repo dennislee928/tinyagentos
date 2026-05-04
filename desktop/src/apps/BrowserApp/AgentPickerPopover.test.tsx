@@ -247,6 +247,31 @@ describe("AgentPickerPopover", () => {
     });
   });
 
+  it("ignores a second pin click while the first is in flight", async () => {
+    let resolve!: (v: { pinned: boolean }) => void;
+    const deferred = new Promise<{ pinned: boolean }>((r) => { resolve = r; });
+    vi.spyOn(browserAgentApi, "pinAgent").mockReturnValueOnce(deferred);
+
+    const onClose = vi.fn();
+    render(<AgentPickerPopover {...defaultProps({ onClose })} />);
+    await waitFor(() => {
+      expect(screen.getByText("Alpha")).toBeTruthy();
+    });
+
+    // First click — starts in-flight pin
+    fireEvent.click(screen.getByText("Alpha"));
+    // Second click — should be ignored because pinningRef.current is true
+    fireEvent.click(screen.getByText("Alpha"));
+
+    // Resolve the deferred promise
+    await act(async () => { resolve({ pinned: true }); });
+
+    await waitFor(() => {
+      expect(browserAgentApi.pinAgent).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("listbox role + aria-label present", async () => {
     render(<AgentPickerPopover {...defaultProps()} />);
     await waitFor(() => {

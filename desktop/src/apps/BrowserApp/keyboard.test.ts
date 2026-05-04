@@ -155,6 +155,37 @@ describe("useBrowserKeyboardShortcuts", () => {
     expect(received[0].detail?.windowId).toBe(TEST_WINDOW_ID);
   });
 
+  it("Cmd+Shift+A is suppressed when an input element has focus", () => {
+    renderHook(() =>
+      useBrowserKeyboardShortcuts({
+        windowId: TEST_WINDOW_ID,
+        hasFocus: true,
+        onOpenFind: () => {},
+      }),
+    );
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+
+    const received: Event[] = [];
+    const listener = (e: Event) => received.push(e);
+    window.addEventListener("taos-browser:open-agent-picker", listener);
+
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "A",
+          shiftKey: true,
+          ctrlKey: true,
+        } as any),
+      );
+    });
+
+    window.removeEventListener("taos-browser:open-agent-picker", listener);
+    input.remove();
+    expect(received).toHaveLength(0);
+  });
+
   it("Cmd+Shift+A is preventDefault'd", () => {
     renderHook(() =>
       useBrowserKeyboardShortcuts({

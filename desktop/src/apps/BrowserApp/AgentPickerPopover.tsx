@@ -2,7 +2,7 @@
  * AgentPickerPopover — lets the user search for and pin an agent to the active tab.
  * Opened by clicking "+ agent" chip in Chrome or via Cmd+Shift+A.
  */
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { listAgents, pinAgent, type AgentDto } from "@/lib/browser-agent-api";
 import { resolveAgentEmoji } from "@/lib/agent-emoji";
 import { useBrowserStore } from "@/stores/browser-store";
@@ -16,6 +16,7 @@ export interface AgentPickerPopoverProps {
   profileId: string;
   pinnedAgentIds: string[];
   onClose: () => void;
+  triggerRef?: React.RefObject<HTMLButtonElement | null>;
 }
 
 export function AgentPickerPopover({
@@ -24,9 +25,11 @@ export function AgentPickerPopover({
   profileId,
   pinnedAgentIds,
   onClose,
+  triggerRef,
 }: AgentPickerPopoverProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const pinningRef = useRef(false);
   const [agents, setAgents] = useState<AgentDto[] | null>(null);
   const [query, setQuery] = useState("");
   const [focusedIndex, setFocusedIndex] = useState(0);
@@ -75,25 +78,31 @@ export function AgentPickerPopover({
   }, []);
 
   async function handlePin(agent: AgentDto) {
-    if (isDisabled(agent)) return;
+    if (isDisabled(agent) || pinningRef.current) return;
+    pinningRef.current = true;
     setError(null);
-    const result = await pinAgent(profileId, tabId, agent.id);
-    if (result === null) {
-      setError("Network error — please try again");
-      return;
+    try {
+      const result = await pinAgent(profileId, tabId, agent.id);
+      if (result === null) {
+        setError("Network error — please try again");
+        return;
+      }
+      if ("error" in result) {
+        setError(result.error);
+        return;
+      }
+      // { pinned: true } or { pinned: false } (race / already pinned) — both call addPinnedAgent
+      useBrowserStore.getState().addPinnedAgent(windowId, tabId, agent.id);
+      useBrowserAgentStore.getState().openPanel(windowId, tabId, agent.id);
+      onClose();
+    } finally {
+      pinningRef.current = false;
     }
-    if ("error" in result) {
-      setError(result.error);
-      return;
-    }
-    // { pinned: true } or { pinned: false } (race / already pinned) — both call addPinnedAgent
-    useBrowserStore.getState().addPinnedAgent(windowId, tabId, agent.id);
-    useBrowserAgentStore.getState().openPanel(windowId, tabId, agent.id);
-    onClose();
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Escape") {
+      triggerRef?.current?.focus();
       onClose();
       return;
     }
