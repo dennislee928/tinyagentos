@@ -12,6 +12,7 @@ import { useState } from "react";
 import { ArrowLeft, ArrowRight, RotateCw } from "lucide-react";
 import { useBrowserStore } from "@/stores/browser-store";
 import { ProfileSwitcher } from "./ProfileSwitcher";
+import { ProfileManager } from "./ProfileManager";
 
 interface ChromeProps {
   windowId: string;
@@ -24,6 +25,7 @@ export function Chrome({ windowId }: ChromeProps) {
   const goForward = useBrowserStore((s) => s.goForward);
   const navigateTab = useBrowserStore((s) => s.navigateTab);
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [managerOpen, setManagerOpen] = useState(false);
 
   if (!win) return null;
 
@@ -101,10 +103,19 @@ export function Chrome({ windowId }: ChromeProps) {
           <ProfileSwitcher
             windowId={windowId}
             onClose={() => setSwitcherOpen(false)}
-            // PR 5 Task 5 will wire onManage to open ProfileManager
+            onManage={() => {
+              setSwitcherOpen(false);
+              setManagerOpen(true);
+            }}
           />
         )}
       </div>
+      {managerOpen && (
+        <ProfileManager
+          activeProfileId={win.profileId}
+          onClose={() => setManagerOpen(false)}
+        />
+      )}
     </div>
   );
 }
