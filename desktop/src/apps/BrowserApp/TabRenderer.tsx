@@ -18,6 +18,7 @@
  */
 import { useEffect } from "react";
 import { useBrowserStore } from "@/stores/browser-store";
+import { useBrowserSettingsStore } from "@/stores/browser-settings-store";
 import { detectLiveExclusion } from "./live-exclusion";
 import type { Tab } from "./types";
 
@@ -62,7 +63,8 @@ export function TabRenderer({ windowId }: TabRendererProps) {
           );
         }
         if (exclusion) continue; // exempt
-        if (now - tab.lastActiveAt > DISCARD_TIMEOUT_MS) {
+        const { discardTimeoutMs } = useBrowserSettingsStore.getState();
+        if (now - tab.lastActiveAt > discardTimeoutMs) {
           useBrowserStore.getState().markTabDiscarded(windowId, tab.id);
         }
       }
@@ -71,7 +73,8 @@ export function TabRenderer({ windowId }: TabRendererProps) {
       const refreshed = useBrowserStore.getState().windows[windowId];
       if (!refreshed) return;
       const stillLive = refreshed.tabs.filter((t) => t.state === "live");
-      const overflowCount = stillLive.length - MAX_LIVE_TABS;
+      const { maxLiveTabs } = useBrowserSettingsStore.getState();
+      const overflowCount = stillLive.length - maxLiveTabs;
       if (overflowCount > 0) {
         // Discard oldest non-pinned non-active until at cap
         const candidates = stillLive

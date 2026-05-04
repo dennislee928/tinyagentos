@@ -16,11 +16,11 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useBrowserStore } from "@/stores/browser-store";
+import { useBrowserSettingsStore, searchUrlFor } from "@/stores/browser-settings-store";
 import { fetchSuggestions, type Suggestion } from "@/lib/browser-suggest-api";
 import { AddressSuggest } from "./AddressSuggest";
 
 const SUGGEST_DEBOUNCE_MS = 150;
-const DEFAULT_SEARCH_URL = "https://duckduckgo.com/?q=";
 
 interface AddressBarProps {
   windowId: string;
@@ -166,5 +166,5 @@ function resolveFinalUrl(input: string): string {
   if (input.includes(".") && !input.includes(" ")) {
     return `https://${input}`;
   }
-  return `${DEFAULT_SEARCH_URL}${encodeURIComponent(input)}`;
+  return searchUrlFor(useBrowserSettingsStore.getState().searchEngine, input);
 }

@@ -9,10 +9,11 @@
  * automatically. This component does NOT render its own traffic lights.
  */
 import { useState } from "react";
-import { ArrowLeft, ArrowRight, RotateCw } from "lucide-react";
+import { ArrowLeft, ArrowRight, RotateCw, Settings } from "lucide-react";
 import { useBrowserStore } from "@/stores/browser-store";
 import { ProfileSwitcher } from "./ProfileSwitcher";
 import { ProfileManager } from "./ProfileManager";
+import { SettingsPanel } from "./SettingsPanel";
 
 interface ChromeProps {
   windowId: string;
@@ -26,6 +27,7 @@ export function Chrome({ windowId }: ChromeProps) {
   const navigateTab = useBrowserStore((s) => s.navigateTab);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   if (!win) return null;
 
@@ -81,6 +83,22 @@ export function Chrome({ windowId }: ChromeProps) {
 
       {/* Spacer pushes the profile chip to the right */}
       <div className="flex-1" />
+
+      {/* Settings button */}
+      <div className="relative">
+        <button
+          type="button"
+          aria-label="Settings"
+          title="Settings"
+          onClick={() => setSettingsOpen((s) => !s)}
+          className="p-1 rounded hover:bg-shell-hover"
+        >
+          <Settings size={16} />
+        </button>
+        {settingsOpen && (
+          <SettingsPanel onClose={() => setSettingsOpen(false)} />
+        )}
+      </div>
 
       {/* Profile chip — clicking opens the ProfileSwitcher dropdown */}
       <div className="relative">
