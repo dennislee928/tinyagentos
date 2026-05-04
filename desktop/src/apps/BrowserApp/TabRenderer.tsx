@@ -17,7 +17,7 @@
  * with playing audio/video, active form input, or in-flight upload
  * are exempt regardless of idle time. PR 4 ships the basic policy.
  */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useBrowserStore } from "@/stores/browser-store";
 import { useBrowserSettingsStore } from "@/stores/browser-settings-store";
 import { useBrowserAgentStore } from "@/stores/browser-agent-store";
@@ -27,6 +27,7 @@ import type { AgentWsHandle } from "./agent-ws-bridge";
 import { detectLiveExclusion } from "./live-exclusion";
 import { ReaderMode } from "./ReaderMode";
 import { AgentPanel } from "./AgentPanel";
+import { PageContextMenu } from "./PageContextMenu";
 import type { Tab } from "./types";
 
 export const DISCARD_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -188,6 +189,13 @@ export function TabRenderer({ windowId }: TabRendererProps) {
       (s) => (win ? s.panels[`${windowId}:${win.activeTabId}`]?.isOpen : false),
     ) ?? false;
 
+  // Context menu state — position where the user right-clicked.
+  // PR 6 limitation: only fires when right-clicking on the iframe wrapper border,
+  // not on the iframe content itself (sandbox blocks contextmenu propagation to
+  // the parent). PR 7 will add copilot.js → parent postMessage forwarding so
+  // right-click anywhere on the page surface reaches this handler.
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
   if (!win) return null;
 
   const activeTab = win.tabs.find((t) => t.id === win.activeTabId);
@@ -196,7 +204,16 @@ export function TabRenderer({ windowId }: TabRendererProps) {
   return (
     <div className="flex flex-1 overflow-hidden bg-shell-bg-deep">
       {/* Iframe pool — relative container so iframes can position absolutely */}
-      <div className="relative flex-1 overflow-hidden">
+      <div
+        className="relative flex-1 overflow-hidden"
+        onContextMenu={(e) => {
+          // Right-click on the iframe wrapper. See comment above for PR 6 limitation.
+          e.preventDefault();
+          if (activeTab) {
+            setContextMenu({ x: e.clientX, y: e.clientY });
+          }
+        }}
+      >
         {win.tabs.map((tab) => {
           const isActive = tab.id === win.activeTabId;
           if (tab.state === "discarded") {
@@ -245,6 +262,21 @@ export function TabRenderer({ windowId }: TabRendererProps) {
             </div>
           );
         })}
+
+        {/* Page context menu — shown when user right-clicks the iframe wrapper */}
+        {contextMenu && activeTab && (
+          <PageContextMenu
+            windowId={windowId}
+            tabId={activeTab.id}
+            profileId={win.profileId}
+            url={activeTab.url}
+            title={activeTab.title || activeTab.url || ""}
+            selection={null}
+            x={contextMenu.x}
+            y={contextMenu.y}
+            onClose={() => setContextMenu(null)}
+          />
+        )}
       </div>
 
       {/* Agent panel — renders to the right of the iframe; iframe squeezes via flex */}
