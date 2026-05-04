@@ -66,6 +66,187 @@ class BrowserStore(BaseStore):
             for r in rows
         ]
 
+    async def upsert_window(
+        self,
+        *,
+        user_id: str,
+        window_id: str,
+        profile_id: str,
+        active_tab_id: str | None,
+        state_json: str,
+    ) -> None:
+        """Insert-or-update browser window state for (user, window).
+
+        Used by the windows endpoint to persist debounced UI state.
+        """
+        if not user_id:
+            raise ValueError("user_id is required")
+        if not window_id:
+            raise ValueError("window_id is required")
+        if not profile_id:
+            raise ValueError("profile_id is required")
+        assert self._db is not None
+        import time
+        await self._db.execute(
+            "INSERT INTO browser_windows "
+            "(user_id, window_id, profile_id, active_tab_id, state, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (user_id, window_id) DO UPDATE SET "
+            "  profile_id = excluded.profile_id, "
+            "  active_tab_id = excluded.active_tab_id, "
+            "  state = excluded.state, "
+            "  updated_at = excluded.updated_at",
+            (user_id, window_id, profile_id, active_tab_id, state_json, int(time.time())),
+        )
+        await self._db.commit()
+
+    async def list_windows(self, *, user_id: str) -> list[dict]:
+        """Return persisted browser windows for a user, ordered by updated_at desc."""
+        if not user_id:
+            raise ValueError("user_id is required")
+        assert self._db is not None
+        cursor = await self._db.execute(
+            "SELECT window_id, profile_id, active_tab_id, state, updated_at "
+            "FROM browser_windows WHERE user_id = ? "
+            "ORDER BY updated_at DESC",
+            (user_id,),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "window_id": r[0],
+                "profile_id": r[1],
+                "active_tab_id": r[2],
+                "state": r[3],
+                "updated_at": r[4],
+            }
+            for r in rows
+        ]
+
+    async def delete_window(self, *, user_id: str, window_id: str) -> bool:
+        """Remove a persisted browser window. Returns True if a row was deleted."""
+        if not user_id:
+            raise ValueError("user_id is required")
+        if not window_id:
+            raise ValueError("window_id is required")
+        assert self._db is not None
+        cursor = await self._db.execute(
+            "DELETE FROM browser_windows WHERE user_id = ? AND window_id = ?",
+            (user_id, window_id),
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def add_history(
+        self,
+        *,
+        user_id: str,
+        profile_id: str,
+        url: str,
+        title: str | None,
+        visited_at: int,
+    ) -> None:
+        """Append a history entry. Schema is bag-of-visits — duplicates allowed."""
+        if not user_id or not profile_id:
+            raise ValueError("user_id and profile_id required")
+        assert self._db is not None
+        await self._db.execute(
+            "INSERT INTO history (user_id, profile_id, url, title, visited_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (user_id, profile_id, url, title, visited_at),
+        )
+        await self._db.commit()
+
+    async def search_history(
+        self,
+        *,
+        user_id: str,
+        profile_id: str,
+        query: str,
+        limit: int = 8,
+    ) -> list[dict]:
+        """Substring match on url + title for the (user, profile). Most-recent first."""
+        if not user_id or not profile_id:
+            raise ValueError("user_id and profile_id required")
+        assert self._db is not None
+        like = f"%{query}%"
+        cursor = await self._db.execute(
+            "SELECT url, title, visited_at "
+            "FROM history "
+            "WHERE user_id = ? AND profile_id = ? "
+            "  AND (url LIKE ? OR title LIKE ?) "
+            "ORDER BY visited_at DESC "
+            "LIMIT ?",
+            (user_id, profile_id, like, like, limit),
+        )
+        rows = await cursor.fetchall()
+        return [{"url": r[0], "title": r[1], "visited_at": r[2]} for r in rows]
+
+    async def add_bookmark(
+        self,
+        *,
+        user_id: str,
+        profile_id: str,
+        bookmark_id: str,
+        url: str,
+        title: str,
+        folder_path: str = "/",
+        created_at: int,
+    ) -> None:
+        """Add a bookmark. Idempotent on (user, profile, bookmark_id)."""
+        if not user_id or not profile_id or not bookmark_id:
+            raise ValueError("user_id, profile_id, bookmark_id required")
+        assert self._db is not None
+        await self._db.execute(
+            "INSERT OR REPLACE INTO bookmarks "
+            "(user_id, profile_id, bookmark_id, folder_path, url, title, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, profile_id, bookmark_id, folder_path, url, title, created_at),
+        )
+        await self._db.commit()
+
+    async def list_bookmarks(
+        self,
+        *,
+        user_id: str,
+        profile_id: str,
+        query: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Return bookmarks for (user, profile), optionally substring-filtered."""
+        if not user_id or not profile_id:
+            raise ValueError("user_id and profile_id required")
+        assert self._db is not None
+        if query:
+            like = f"%{query}%"
+            cursor = await self._db.execute(
+                "SELECT bookmark_id, folder_path, url, title, created_at "
+                "FROM bookmarks "
+                "WHERE user_id = ? AND profile_id = ? "
+                "  AND (url LIKE ? OR title LIKE ?) "
+                "ORDER BY created_at DESC LIMIT ?",
+                (user_id, profile_id, like, like, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT bookmark_id, folder_path, url, title, created_at "
+                "FROM bookmarks "
+                "WHERE user_id = ? AND profile_id = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (user_id, profile_id, limit),
+            )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "bookmark_id": r[0],
+                "folder_path": r[1],
+                "url": r[2],
+                "title": r[3],
+                "created_at": r[4],
+            }
+            for r in rows
+        ]
+
 
 class BrowserCookieStore:
     """SQLCipher-encrypted cookie store. Per-user 256-bit key.
