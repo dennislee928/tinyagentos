@@ -17,8 +17,10 @@
  *
  * Close button (×) appears on hover after the title; absent on pinned tabs.
  */
+import { useState } from "react";
 import { Plus, X, Globe } from "lucide-react";
 import { useBrowserStore } from "@/stores/browser-store";
+import { MoveTabMenu } from "./MoveTabMenu";
 import type { Tab } from "./types";
 
 interface TabStripProps {
@@ -30,6 +32,10 @@ export function TabStrip({ windowId }: TabStripProps) {
   const setActiveTab = useBrowserStore((s) => s.setActiveTab);
   const closeTab = useBrowserStore((s) => s.closeTab);
   const addTab = useBrowserStore((s) => s.addTab);
+
+  const [contextMenu, setContextMenu] = useState<
+    { tabId: string; x: number; y: number } | null
+  >(null);
 
   if (!win) return null;
 
@@ -52,6 +58,10 @@ export function TabStrip({ windowId }: TabStripProps) {
           isActive={tab.id === win.activeTabId}
           onActivate={() => setActiveTab(windowId, tab.id)}
           onClose={() => closeTab(windowId, tab.id)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setContextMenu({ tabId: tab.id, x: e.clientX, y: e.clientY });
+          }}
         />
       ))}
 
@@ -63,6 +73,15 @@ export function TabStrip({ windowId }: TabStripProps) {
       >
         <Plus size={14} />
       </button>
+
+      {contextMenu && (
+        <MoveTabMenu
+          fromWindowId={windowId}
+          tabId={contextMenu.tabId}
+          anchorRect={{ x: contextMenu.x, y: contextMenu.y }}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
 }
@@ -72,9 +91,10 @@ interface TabItemProps {
   isActive: boolean;
   onActivate: () => void;
   onClose: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
 }
 
-function TabItem({ tab, isActive, onActivate, onClose }: TabItemProps) {
+function TabItem({ tab, isActive, onActivate, onClose, onContextMenu }: TabItemProps) {
   const titleText = tab.title || tab.url || "New tab";
 
   // Width per Q8 layout A. Pinned: 32px (favicon-only). Inactive: 140px.
@@ -92,6 +112,7 @@ function TabItem({ tab, isActive, onActivate, onClose }: TabItemProps) {
       data-tab-id={tab.id}
       data-pinned={tab.pinned ? "true" : "false"}
       onClick={onActivate}
+      onContextMenu={onContextMenu}
       className={[
         widthClass,
         "h-[28px] px-2 flex items-center gap-1.5 rounded-t cursor-pointer",

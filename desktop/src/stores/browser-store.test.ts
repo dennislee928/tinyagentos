@@ -187,6 +187,59 @@ describe("browser-store: removeWindow", () => {
   });
 });
 
+describe("browser-store: moveTab", () => {
+  beforeEach(async () => {
+    const mod = await import("./browser-store");
+    mod.useBrowserStore.setState({ windows: {} });
+  });
+
+  it("moves a tab from source to destination window", async () => {
+    const s = await freshStore();
+    s.createWindow("win-a", "personal");
+    s.createWindow("win-b", "personal");
+    const movedId = s.addTab("win-a", "https://moved.test/");
+
+    s.moveTab("win-a", movedId, "win-b");
+
+    expect(s.getWindow("win-a")?.tabs.find((t) => t.id === movedId)).toBeUndefined();
+    expect(s.getWindow("win-b")?.tabs.find((t) => t.id === movedId)).toBeDefined();
+    expect(s.getWindow("win-b")?.activeTabId).toBe(movedId);
+  });
+
+  it("leaves source with a fresh new-tab when emptied by move", async () => {
+    const s = await freshStore();
+    s.createWindow("win-a", "personal");
+    s.createWindow("win-b", "personal");
+    const onlyTab = s.getWindow("win-a")!.tabs[0].id;
+
+    s.moveTab("win-a", onlyTab, "win-b");
+
+    const winA = s.getWindow("win-a");
+    expect(winA?.tabs.length).toBe(1);
+    expect(winA?.tabs[0].id).not.toBe(onlyTab);
+  });
+
+  it("noop when source and destination are the same window", async () => {
+    const s = await freshStore();
+    s.createWindow("win-a", "personal");
+    const tabId = s.addTab("win-a", "https://x.test/");
+
+    s.moveTab("win-a", tabId, "win-a");
+
+    expect(s.getWindow("win-a")?.tabs.find((t) => t.id === tabId)).toBeDefined();
+  });
+
+  it("noop when destination window is missing", async () => {
+    const s = await freshStore();
+    s.createWindow("win-a", "personal");
+    const tabId = s.addTab("win-a", "https://x.test/");
+
+    s.moveTab("win-a", tabId, "win-missing");
+
+    expect(s.getWindow("win-a")?.tabs.find((t) => t.id === tabId)).toBeDefined();
+  });
+});
+
 describe("browser-store: zoom", () => {
   beforeEach(async () => {
     const mod = await import("./browser-store");

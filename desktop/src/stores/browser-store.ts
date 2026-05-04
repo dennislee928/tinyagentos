@@ -65,6 +65,10 @@ interface BrowserStore {
 
   // Per-tab zoom
   setTabZoom: (windowId: string, tabId: string, zoom: number) => void;
+
+  // Cross-window tab move (PR 4: menu-driven; native drag-and-drop with
+  // DOM-portal iframe preservation is deferred to a future enhancement)
+  moveTab: (fromWindowId: string, tabId: string, toWindowId: string, toIndex?: number) => void;
 }
 
 export const useBrowserStore = create<BrowserStore>((set, get) => ({
@@ -228,6 +232,52 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
   setTabZoom(windowId, tabId, zoom) {
     const clamped = Math.max(0.5, Math.min(3.0, zoom));
     set((s) => updateTab(s, windowId, tabId, (t) => ({ ...t, zoom: clamped })));
+  },
+
+  moveTab(fromWindowId, tabId, toWindowId, toIndex) {
+    set((s) => {
+      if (fromWindowId === toWindowId) return s;
+      const fromWin = s.windows[fromWindowId];
+      const toWin = s.windows[toWindowId];
+      if (!fromWin || !toWin) return s;
+
+      const tab = fromWin.tabs.find((t) => t.id === tabId);
+      if (!tab) return s;
+
+      // Remove from source
+      const fromTabs = fromWin.tabs.filter((t) => t.id !== tabId);
+      const replacementTab = fromTabs.length === 0 ? makeTab() : null;
+      const sourceAfter: BrowserWindowState = {
+        ...fromWin,
+        tabs: replacementTab ? [replacementTab] : fromTabs,
+        activeTabId: replacementTab
+          ? replacementTab.id
+          : (fromWin.activeTabId === tabId
+              ? fromTabs[Math.min(0, fromTabs.length - 1)].id
+              : fromWin.activeTabId),
+      };
+
+      // Insert into destination at toIndex (or append if undefined)
+      const insertAt = toIndex ?? toWin.tabs.length;
+      const destTabs = [
+        ...toWin.tabs.slice(0, insertAt),
+        tab,
+        ...toWin.tabs.slice(insertAt),
+      ];
+      const destAfter: BrowserWindowState = {
+        ...toWin,
+        tabs: destTabs,
+        activeTabId: tab.id,
+      };
+
+      return {
+        windows: {
+          ...s.windows,
+          [fromWindowId]: sourceAfter,
+          [toWindowId]: destAfter,
+        },
+      };
+    });
   },
 }));
 
