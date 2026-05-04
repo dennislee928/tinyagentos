@@ -15,9 +15,10 @@ in the chrome) lands in PR 5. PR 3 only needs:
 """
 from __future__ import annotations
 
+import re
 import time
 
-from tinyagentos.routes.desktop_browser.store import BrowserStore
+from tinyagentos.routes.desktop_browser.store import BrowserCookieStore, BrowserStore
 
 
 # Defaults bootstrapped per user. profile_id is the URL-safe identifier;
@@ -82,11 +83,6 @@ async def get_profile_or_404(
     )
 
 
-import re
-
-from tinyagentos.routes.desktop_browser.store import BrowserCookieStore
-
-
 def _slugify(name: str) -> str:
     """Convert a profile name to a URL-safe slug."""
     slug = re.sub(r"[^\w\s-]", "", name.lower())
@@ -116,7 +112,7 @@ async def create_profile(
 
     base_slug = _slugify(name)
     max_attempts = 100
-    for attempt in range(max_attempts):
+    for _attempt in range(max_attempts):
         # Fast-path: skip slugs that are already visible in the list.
         existing = await store.list_profiles(user_id=user_id)
         have_ids = {p["profile_id"] for p in existing}

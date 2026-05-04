@@ -152,3 +152,102 @@ class TestExtractEndpointFetch:
         # 500 with non-HTML content, word_count will just be 0)
         # Verify the endpoint doesn't crash
         assert resp.status_code in (200, 502)
+
+
+@pytest.mark.asyncio
+class TestExtractEndpointRedirectSsrf:
+    """Regression tests: SSRF re-validation on each redirect hop."""
+
+    @respx.mock
+    async def test_redirect_to_rfc1918_returns_403(self, client):
+        # Initial URL passes SSRF; redirect lands on RFC1918 — must be blocked.
+        respx.get("http://example.com/go").mock(
+            return_value=Response(
+                302,
+                headers={"location": "http://192.168.1.1/"},
+            )
+        )
+
+        with patch(
+            "tinyagentos.routes.desktop_browser.ssrf.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+        ):
+            resp = await client.get(
+                "/api/desktop/browser/extract",
+                params={"profile_id": "personal", "url": "http://example.com/go"},
+            )
+
+        assert resp.status_code == 403
+
+    @respx.mock
+    async def test_redirect_to_aws_imds_returns_403(self, client):
+        # Redirect to AWS IMDS (169.254.169.254) is link-local — blocked.
+        respx.get("http://example.com/redir").mock(
+            return_value=Response(
+                301,
+                headers={"location": "http://169.254.169.254/latest/meta-data/"},
+            )
+        )
+
+        with patch(
+            "tinyagentos.routes.desktop_browser.ssrf.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+        ):
+            resp = await client.get(
+                "/api/desktop/browser/extract",
+                params={"profile_id": "personal", "url": "http://example.com/redir"},
+            )
+
+        assert resp.status_code == 403
+
+    @respx.mock
+    async def test_redirect_chain_too_long_returns_502(self, client):
+        # 5-hop cycle: example.com/hop0 → /hop1 → … — exhausts the cap.
+        for i in range(5):
+            respx.get(f"http://example.com/hop{i}").mock(
+                return_value=Response(
+                    302,
+                    headers={"location": f"http://example.com/hop{i + 1}"},
+                )
+            )
+
+        with patch(
+            "tinyagentos.routes.desktop_browser.ssrf.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+        ):
+            resp = await client.get(
+                "/api/desktop/browser/extract",
+                params={"profile_id": "personal", "url": "http://example.com/hop0"},
+            )
+
+        assert resp.status_code == 502
+
+    @respx.mock
+    async def test_normal_redirect_followed_and_extracted(self, client):
+        # http → final response on the same public host — should succeed.
+        respx.get("http://example.com/article").mock(
+            return_value=Response(
+                301,
+                headers={"location": "http://example.com/article-final"},
+            )
+        )
+        respx.get("http://example.com/article-final").mock(
+            return_value=Response(
+                200,
+                content=ARTICLE_HTML,
+                headers={"content-type": "text/html"},
+            )
+        )
+
+        with patch(
+            "tinyagentos.routes.desktop_browser.ssrf.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+        ):
+            resp = await client.get(
+                "/api/desktop/browser/extract",
+                params={"profile_id": "personal", "url": "http://example.com/article"},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["word_count"] > 100

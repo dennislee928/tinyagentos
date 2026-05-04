@@ -89,10 +89,10 @@ describe("Chrome — profile chip", () => {
 
     // Wait for the async listProfiles call to resolve and the color dot to appear
     await waitFor(() => {
-      const dot = document.querySelector(
-        "[aria-label='Profile: personal'] span[aria-hidden='true']",
-      ) as HTMLElement | null;
-      expect(dot?.style.backgroundColor).toBe("rgb(171, 205, 239)"); // #abcdef in rgb
+      const chip = screen.getByLabelText(/profile: personal/i);
+      const dot = chip.querySelector("span[aria-hidden='true']") as HTMLElement | null;
+      expect(dot).not.toBeNull();
+      expect(dot!.style.backgroundColor).toBe("rgb(171, 205, 239)"); // #abcdef in rgb
     });
   });
 });

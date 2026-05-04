@@ -292,39 +292,7 @@ describe("ProfileManager — orphan recovery", () => {
     useBrowserStore.getState().createWindow("window-a", "personal");
     useBrowserStore.getState().createWindow("window-b", "work");
 
-    // Mock: DELETE succeeds, then GET list returns only personal (work was removed)
-    global.fetch = vi.fn().mockImplementation((url: string, opts: any) => {
-      if (opts?.method === "DELETE") {
-        return Promise.resolve({ ok: true, status: 204 });
-      }
-      // GET /profiles — return only personal after delete
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          profiles: [
-            { profile_id: "personal", name: "Personal", color: "#6c8df0", created_at: 0 },
-          ],
-        }),
-      });
-    });
-
-    // Render ProfileManager as if the user in window-a opened it (active = personal)
-    render(
-      <ProfileManager
-        activeProfileId="personal"
-        onClose={() => {}}
-      />,
-    );
-
-    // Wait for the initial profile list (which initially has personal + work)
-    // But we've already set up fetch to return only personal, so wait for Work to appear
-    // via the initial load mock — we need to override the initial load too.
-    // Let's wait for the list to settle: the first GET returns personal only (no work).
-    // Because the fetch is mocked to return personal-only for ALL GETs, the list
-    // will show only Personal. We won't see Work in the UI.
-    // To properly test the flow, we need Work in the initial list.
-    // Re-mock: first GET returns both, DELETE succeeds, second GET returns only personal.
+    // First GET returns both profiles; DELETE succeeds; second GET returns only personal.
     global.fetch = vi.fn()
       .mockImplementationOnce(() =>
         Promise.resolve({
@@ -353,32 +321,28 @@ describe("ProfileManager — orphan recovery", () => {
         }),
       );
 
-    // Re-render with correct mock sequence
-    const { unmount } = render(
+    render(
       <ProfileManager
         activeProfileId="personal"
         onClose={() => {}}
       />,
     );
 
-    await waitFor(() => screen.getAllByText("Work")[0]);
+    await waitFor(() => screen.getByText("Work"));
 
     // Click delete on Work
-    const deleteBtns = screen.getAllByLabelText(/delete profile work/i);
-    fireEvent.click(deleteBtns[deleteBtns.length - 1]);
+    const deleteBtn = screen.getByLabelText(/delete profile work/i);
+    fireEvent.click(deleteBtn);
 
     // Confirm the deletion
-    await waitFor(() => screen.getAllByText(/this also clears all saved cookies/i)[0]);
-    const confirmBtns = screen.getAllByLabelText(/confirm delete/i);
-    fireEvent.click(confirmBtns[confirmBtns.length - 1]);
+    await waitFor(() => screen.getByText(/this also clears all saved cookies/i));
+    fireEvent.click(screen.getByLabelText(/confirm delete/i));
 
     // After delete completes, window-b should have been switched to personal
     await waitFor(() => {
       const windowB = useBrowserStore.getState().windows["window-b"];
       expect(windowB?.profileId).toBe("personal");
     });
-
-    unmount();
   });
 
   it("Test B: no switchProfile called when deleted profile is not in any window", async () => {

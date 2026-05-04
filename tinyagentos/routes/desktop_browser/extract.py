@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from urllib.parse import urlparse, urlsplit
+from urllib.parse import urljoin, urlparse, urlsplit
 
 import httpx
 from fastapi import Depends, Request
@@ -50,7 +50,9 @@ def extract_readable(html_bytes: bytes, url: str) -> dict[str, Any]:
 
     try:
         decoded = html_bytes.decode("utf-8", errors="replace")
-        doc = Document(decoded)
+        # Pass url so readability-lxml can absolutize relative href/src via
+        # make_links_absolute — without it, Reader mode renders broken links.
+        doc = Document(decoded, url=url)
         title = (doc.short_title() or doc.title() or "").strip()
         summary_html = doc.summary(html_partial=True)
     except Exception as e:
@@ -61,8 +63,7 @@ def extract_readable(html_bytes: bytes, url: str) -> dict[str, Any]:
     try:
         text = lxml_html.fromstring(summary_html).text_content().strip()
     except Exception:
-        # Empty / malformed summary — fall through with empty text
-        pass
+        _logger.debug("lxml text_content failed for extracted summary; returning empty text")
 
     word_count = len([w for w in text.split() if w.strip()])
 
@@ -103,15 +104,39 @@ async def extract_endpoint(
         )
         return JSONResponse({"error": "URL blocked"}, status_code=403)
 
-    # Fetch (no rewriter / no injection — we want raw upstream HTML for extraction)
-    async with httpx.AsyncClient(
-        follow_redirects=True, timeout=_FETCH_TIMEOUT,
-    ) as http:
-        try:
-            response = await http.get(url)
-        except httpx.HTTPError as e:
-            _logger.info("browser extract fetch error: err=%s", e)
-            return JSONResponse({"error": "fetch failed"}, status_code=502)
+    # Fetch (no rewriter / no injection — we want raw upstream HTML for extraction).
+    # Walk redirects manually so we can re-check SSRF on each hop, mirroring
+    # the pattern in proxy.py. follow_redirects=False prevents httpx from silently
+    # following a redirect to an internal address after the initial SSRF gate passes.
+    _MAX_HOPS = 5
+    response: httpx.Response | None = None
+    async with httpx.AsyncClient(follow_redirects=False, timeout=_FETCH_TIMEOUT) as http:
+        fetch_url = url
+        for _hop in range(_MAX_HOPS):
+            try:
+                response = await http.get(fetch_url)
+            except httpx.HTTPError as e:
+                _logger.info("browser extract fetch error: err=%s", e)
+                return JSONResponse({"error": "fetch failed"}, status_code=502)
+            if response.is_redirect:
+                location = response.headers.get("location")
+                if not location:
+                    return JSONResponse({"error": "redirect missing Location"}, status_code=502)
+                fetch_url = urljoin(fetch_url, location)
+                try:
+                    validate_url_or_raise(fetch_url)
+                except SsrfBlockedError as e:
+                    parsed = urlsplit(fetch_url)
+                    _logger.info(
+                        "browser extract SSRF block on redirect: scheme=%r host=%r reason=%s",
+                        parsed.scheme, parsed.hostname, e,
+                    )
+                    return JSONResponse({"error": "URL blocked"}, status_code=403)
+                continue
+            break
+        else:
+            return JSONResponse({"error": "redirect chain too long"}, status_code=502)
+    assert response is not None
 
     content_type = response.headers.get("content-type", "")
     if "text/html" not in content_type.lower():
