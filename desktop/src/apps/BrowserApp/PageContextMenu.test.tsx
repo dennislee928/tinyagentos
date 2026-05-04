@@ -148,18 +148,18 @@ describe("PageContextMenu", () => {
     const menu = container.firstChild as HTMLElement;
     // Initially Alpha should be focused (first item)
     const items = screen.getAllByRole("menuitem");
-    expect(items[0].getAttribute("aria-selected")).toBe("true");
+    expect(items[0].getAttribute("aria-current")).toBe("true");
 
     fireEvent.keyDown(menu, { key: "ArrowDown" });
     await waitFor(() => {
       const updated = screen.getAllByRole("menuitem");
-      expect(updated[1].getAttribute("aria-selected")).toBe("true");
+      expect(updated[1].getAttribute("aria-current")).toBe("true");
     });
 
     fireEvent.keyDown(menu, { key: "ArrowUp" });
     await waitFor(() => {
       const updated = screen.getAllByRole("menuitem");
-      expect(updated[0].getAttribute("aria-selected")).toBe("true");
+      expect(updated[0].getAttribute("aria-current")).toBe("true");
     });
   });
 
@@ -250,5 +250,31 @@ describe("PageContextMenu", () => {
     await waitFor(() => {
       expect(onClose).toHaveBeenCalled();
     });
+  });
+
+  it("suppresses dispatch when component unmounts during extractReadable", async () => {
+    let resolveExtract!: (v: null) => void;
+    vi.spyOn(browserExtractApi, "extractReadable").mockReturnValue(
+      new Promise<null>((resolve) => { resolveExtract = resolve; }),
+    );
+
+    const dispatched: Event[] = [];
+    const listener = (e: Event) => dispatched.push(e);
+    window.addEventListener("taos:open-messages", listener);
+
+    const { unmount } = render(<PageContextMenu {...defaultProps()} />);
+    await waitFor(() => {
+      expect(screen.getByText(/send to alpha/i)).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText(/send to alpha/i));
+    // Unmount before the extract resolves
+    unmount();
+    // Now resolve — the guard should swallow the dispatch
+    await act(async () => { resolveExtract(null); });
+
+    expect(dispatched.length).toBe(0);
+
+    window.removeEventListener("taos:open-messages", listener);
   });
 });

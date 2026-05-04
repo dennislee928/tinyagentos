@@ -55,6 +55,8 @@ export function PageContextMenu({
   const [agents, setAgents] = useState<AgentDto[]>([]);
   const [focusedIdx, setFocusedIdx] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   // Load agents on mount
   useEffect(() => {
@@ -127,6 +129,7 @@ export function PageContextMenu({
 
   async function handleSendToAgent(agent: AgentDto) {
     const result = await extractReadable(profileId, url);
+    if (!mountedRef.current) return;
     window.dispatchEvent(
       new CustomEvent("taos:open-messages", {
         detail: {
@@ -144,6 +147,7 @@ export function PageContextMenu({
 
   async function handlePinToMemory() {
     const result = await extractReadable(profileId, url);
+    if (!mountedRef.current) return;
     window.dispatchEvent(
       new CustomEvent("taos:open-memory", {
         detail: {
@@ -185,7 +189,7 @@ export function PageContextMenu({
         <button
           key={agent.id}
           role="menuitem"
-          aria-selected={focusedIdx === idx}
+          aria-current={focusedIdx === idx ? "true" : undefined}
           type="button"
           onClick={() => handleSendToAgent(agent)}
           onMouseEnter={() => setFocusedIdx(idx)}
@@ -196,7 +200,7 @@ export function PageContextMenu({
           }`}
         >
           {agent.emoji && <span aria-hidden="true">{agent.emoji}</span>}
-          <span>Send to {agent.name}</span>
+          <span className="flex-1 min-w-0 truncate">Send to {agent.name}</span>
         </button>
       ))}
 
@@ -207,7 +211,7 @@ export function PageContextMenu({
 
       <button
         role="menuitem"
-        aria-selected={focusedIdx === PIN_IDX}
+        aria-current={focusedIdx === PIN_IDX ? "true" : undefined}
         type="button"
         onClick={() => handlePinToMemory()}
         onMouseEnter={() => setFocusedIdx(PIN_IDX)}
