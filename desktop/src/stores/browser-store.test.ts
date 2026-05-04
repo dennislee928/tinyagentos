@@ -284,3 +284,25 @@ describe("browser-store: zoom", () => {
     expect(s.getWindow("win-1")?.tabs[0].zoom).toBeCloseTo(0.5);
   });
 });
+
+describe("browser-store: switchProfile", () => {
+  beforeEach(async () => {
+    const mod = await import("./browser-store");
+    mod.useBrowserStore.setState({ windows: {} });
+  });
+
+  it("updates the window's profileId (basic — Task 6 adds tab snapshot)", async () => {
+    const s = await freshStore();
+    s.createWindow("win-1", "personal");
+    expect(s.getWindow("win-1")?.profileId).toBe("personal");
+
+    s.switchProfile("win-1", "work");
+    expect(s.getWindow("win-1")?.profileId).toBe("work");
+  });
+
+  it("noop when window doesn't exist", async () => {
+    const s = await freshStore();
+    s.switchProfile("missing", "work");
+    expect(s.getWindow("missing")).toBeUndefined();
+  });
+});

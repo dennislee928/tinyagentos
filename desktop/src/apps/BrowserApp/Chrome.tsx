@@ -7,12 +7,11 @@
  * NOTE: The OS-level traffic lights (close / minimize / maximize) live in
  * `desktop/src/components/Window.tsx` — every window in taOS gets them
  * automatically. This component does NOT render its own traffic lights.
- *
- * For PR 4 the profile chip is display-only; PR 5's ProfileSwitcher will
- * wire the click-to-open-dropdown behavior.
  */
+import { useState } from "react";
 import { ArrowLeft, ArrowRight, RotateCw } from "lucide-react";
 import { useBrowserStore } from "@/stores/browser-store";
+import { ProfileSwitcher } from "./ProfileSwitcher";
 
 interface ChromeProps {
   windowId: string;
@@ -24,6 +23,7 @@ export function Chrome({ windowId }: ChromeProps) {
   const goBack = useBrowserStore((s) => s.goBack);
   const goForward = useBrowserStore((s) => s.goForward);
   const navigateTab = useBrowserStore((s) => s.navigateTab);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
 
   if (!win) return null;
 
@@ -80,17 +80,30 @@ export function Chrome({ windowId }: ChromeProps) {
       {/* Spacer pushes the profile chip to the right */}
       <div className="flex-1" />
 
-      {/* Profile chip — display-only for PR 4; PR 5 wires the dropdown */}
-      <div
-        className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-shell-bg-deep border border-shell-border-subtle text-xs"
-        aria-label={`Profile: ${win.profileId}`}
-      >
-        <span
-          className="inline-block w-2 h-2 rounded-full"
-          style={{ backgroundColor: profileColor(win.profileId) }}
-          aria-hidden="true"
-        />
-        <span className="capitalize">{win.profileId}</span>
+      {/* Profile chip — clicking opens the ProfileSwitcher dropdown */}
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setSwitcherOpen((s) => !s)}
+          className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-shell-bg-deep border border-shell-border-subtle text-xs hover:bg-shell-hover"
+          aria-label={`Profile: ${win.profileId}`}
+          aria-haspopup="menu"
+          aria-expanded={switcherOpen}
+        >
+          <span
+            className="inline-block w-2 h-2 rounded-full"
+            style={{ backgroundColor: profileColor(win.profileId) }}
+            aria-hidden="true"
+          />
+          <span className="capitalize">{win.profileId}</span>
+        </button>
+        {switcherOpen && (
+          <ProfileSwitcher
+            windowId={windowId}
+            onClose={() => setSwitcherOpen(false)}
+            // PR 5 Task 5 will wire onManage to open ProfileManager
+          />
+        )}
       </div>
     </div>
   );

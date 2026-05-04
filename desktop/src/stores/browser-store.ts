@@ -69,6 +69,10 @@ interface BrowserStore {
   // Cross-window tab move (PR 4: menu-driven; native drag-and-drop with
   // DOM-portal iframe preservation is deferred to a future enhancement)
   moveTab: (fromWindowId: string, tabId: string, toWindowId: string, toIndex?: number) => void;
+
+  // Profile switching — Task 4: minimal (updates profileId only).
+  // Task 6 will enhance to snapshot/restore tabs per (window, profile).
+  switchProfile: (windowId: string, newProfileId: string) => void;
 }
 
 export const useBrowserStore = create<BrowserStore>((set, get) => ({
@@ -276,6 +280,20 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
           ...s.windows,
           [fromWindowId]: sourceAfter,
           [toWindowId]: destAfter,
+        },
+      };
+    });
+  },
+  switchProfile(windowId, newProfileId) {
+    set((s) => {
+      const win = s.windows[windowId];
+      if (!win) return s;
+      // PR 5 Task 4: minimal — just update profileId. Task 6 will
+      // enhance to snapshot/restore tabs per (window, profile).
+      return {
+        windows: {
+          ...s.windows,
+          [windowId]: { ...win, profileId: newProfileId },
         },
       };
     });
