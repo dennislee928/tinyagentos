@@ -97,32 +97,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_pins_lookup
 """
 
 
-AGENT_PINS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS agent_pins (
-  user_id        TEXT NOT NULL,
-  profile_id     TEXT NOT NULL,
-  tab_id         TEXT NOT NULL,
-  agent_id       TEXT NOT NULL,
-  pinned_at      TEXT NOT NULL,
-  PRIMARY KEY (user_id, profile_id, tab_id, agent_id)
-);
-CREATE INDEX IF NOT EXISTS idx_agent_pins_lookup
-  ON agent_pins (user_id, profile_id, tab_id);
-"""
-
-AGENT_CAPABILITIES_SCHEMA = """
-CREATE TABLE IF NOT EXISTS agent_capabilities (
-  user_id        TEXT NOT NULL,
-  profile_id     TEXT NOT NULL,
-  agent_id       TEXT NOT NULL,
-  host_pattern   TEXT NOT NULL,
-  permissions    TEXT NOT NULL,
-  granted_at     TEXT NOT NULL,
-  expires_at     TEXT,
-  PRIMARY KEY (user_id, profile_id, agent_id, host_pattern)
-);
-"""
-
 COOKIE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS cookies (
   user_id        TEXT NOT NULL,

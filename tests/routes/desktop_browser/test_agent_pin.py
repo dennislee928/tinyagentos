@@ -141,6 +141,18 @@ async def test_delete_pin_returns_false_on_miss(store):
     assert result is False
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kwargs,match", [
+    ({"user_id": "",   "profile_id": "p1", "tab_id": "t1", "agent_id": "a"}, "user_id"),
+    ({"user_id": "u1", "profile_id": "",   "tab_id": "t1", "agent_id": "a"}, "profile_id"),
+    ({"user_id": "u1", "profile_id": "p1", "tab_id": "",   "agent_id": "a"}, "tab_id"),
+    ({"user_id": "u1", "profile_id": "p1", "tab_id": "t1", "agent_id": ""}, "agent_id"),
+])
+async def test_delete_pin_raises_on_empty_param(store, kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        await store.delete_pin(**kwargs)
+
+
 # ---------------------------------------------------------------------------
 # add_capability + list_capabilities
 # ---------------------------------------------------------------------------
@@ -334,3 +346,53 @@ async def test_multi_profile_isolation_capabilities(store):
     )
     caps = await store.list_capabilities(user_id="u1", profile_id="profile-y")
     assert caps == []
+
+
+# ---------------------------------------------------------------------------
+# revoke_capability — input validation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kwargs,match", [
+    ({"user_id": "",   "profile_id": "p1", "agent_id": "a", "host_pattern": "h"}, "user_id"),
+    ({"user_id": "u1", "profile_id": "",   "agent_id": "a", "host_pattern": "h"}, "profile_id"),
+    ({"user_id": "u1", "profile_id": "p1", "agent_id": "",  "host_pattern": "h"}, "agent_id"),
+    ({"user_id": "u1", "profile_id": "p1", "agent_id": "a", "host_pattern": ""}, "host_pattern"),
+])
+async def test_revoke_capability_raises_on_empty_param(store, kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        await store.revoke_capability(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# check_capability — suffix-attack rejection
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["evilexample.com", "xxxexample.com", "fooexample.com"])
+async def test_check_capability_wildcard_rejects_suffix_attack(store, host):
+    await store.add_capability(
+        user_id="u1", profile_id="p1", agent_id="agent-a",
+        host_pattern="*.example.com", permissions="read_dom",
+    )
+    result = await store.check_capability(
+        user_id="u1", profile_id="p1", agent_id="agent-a",
+        host=host, permission="read_dom",
+    )
+    assert result is False, f"{host!r} should not match *.example.com"
+
+
+# ---------------------------------------------------------------------------
+# check_capability — whitespace tolerance in stored permissions
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_check_capability_tolerates_whitespace_in_permissions(store):
+    await store.add_capability(
+        user_id="u1", profile_id="p1", agent_id="agent-a",
+        host_pattern="example.com", permissions="read_dom, navigate",  # space after comma
+    )
+    assert await store.check_capability(
+        user_id="u1", profile_id="p1", agent_id="agent-a",
+        host="example.com", permission="navigate",
+    ) is True

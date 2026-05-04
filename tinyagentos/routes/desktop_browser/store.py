@@ -417,6 +417,14 @@ class BrowserStore(BaseStore):
         agent_id: str,
     ) -> bool:
         """DELETE. Returns True if a row was deleted, False if not present."""
+        if not user_id:
+            raise ValueError("user_id is required")
+        if not profile_id:
+            raise ValueError("profile_id is required")
+        if not tab_id:
+            raise ValueError("tab_id is required")
+        if not agent_id:
+            raise ValueError("agent_id is required")
         assert self._db is not None
         cursor = await self._db.execute(
             "DELETE FROM agent_pins "
@@ -506,6 +514,14 @@ class BrowserStore(BaseStore):
         host_pattern: str,
     ) -> bool:
         """DELETE matching grant. Returns True if a row was deleted."""
+        if not user_id:
+            raise ValueError("user_id is required")
+        if not profile_id:
+            raise ValueError("profile_id is required")
+        if not agent_id:
+            raise ValueError("agent_id is required")
+        if not host_pattern:
+            raise ValueError("host_pattern is required")
         assert self._db is not None
         cursor = await self._db.execute(
             "DELETE FROM agent_capabilities "
@@ -562,7 +578,8 @@ class BrowserStore(BaseStore):
                 continue
 
             # Permission check
-            if permission in row["permissions"].split(","):
+            permissions = [p.strip() for p in row["permissions"].split(",")]
+            if permission in permissions:
                 return True
 
         return False
