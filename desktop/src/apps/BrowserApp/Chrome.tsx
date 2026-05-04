@@ -16,6 +16,7 @@ import { ProfileSwitcher } from "./ProfileSwitcher";
 import { ProfileManager } from "./ProfileManager";
 import { SettingsPanel } from "./SettingsPanel";
 import { AgentPickerPopover } from "./AgentPickerPopover";
+import { AgentPresencePill } from "./AgentPresencePill";
 
 interface ChromeProps {
   windowId: string;
@@ -133,9 +134,12 @@ export function Chrome({ windowId }: ChromeProps) {
             + agent
           </button>
         ) : (
-          <div aria-label={`${activeTab.pinnedAgentIds.length} agents pinned`} className="text-xs px-2 py-0.5 rounded-full bg-shell-bg-deep border border-shell-border-subtle">
-            {activeTab.pinnedAgentIds.length} agent{activeTab.pinnedAgentIds.length !== 1 ? "s" : ""}
-          </div>
+          <AgentPresencePill
+            windowId={windowId}
+            tabId={activeTab.id}
+            pinnedAgentIds={activeTab.pinnedAgentIds}
+            triggerRef={agentChipRef}
+          />
         )}
         {pickerOpen && (
           <AgentPickerPopover
