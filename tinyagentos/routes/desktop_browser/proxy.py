@@ -219,7 +219,9 @@ async def proxy_get(
             extract_text = ""
             extract_title = ""
             try:
-                extract_result = extract_readable(rewritten, url)
+                # Extract from RAW upstream HTML, not the rewritten body — the
+                # agent's context should reference original URLs, not proxied ones.
+                extract_result = extract_readable(response.content, url)
                 extract_text = (extract_result.get("text") or "")[:4000]
                 extract_title = extract_result.get("title", "")
             except Exception:

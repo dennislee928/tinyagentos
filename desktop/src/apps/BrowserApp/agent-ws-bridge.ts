@@ -1,98 +1,99 @@
 /**
- * agent-ws-bridge — parent-side WebSocket for one (windowId, tabId, agentId).
+ * agent-ws-bridge — parent-side listener for server events from copilot.js.
  *
- * Mints a copilot ticket then opens a WS to /api/desktop/browser/copilot.
- * Server events arrive as { event: "page-changed", ... }; the bridge
- * normalises them to { kind: "page-changed", ... } to match AgentEvent in
- * browser-agent-store.
+ * The iframe (via copilot.js) holds the actual WebSocket connection to
+ * /api/desktop/browser/copilot. Server events ({event: "page-changed"}, etc.)
+ * are forwarded by copilot.js to the parent shell via postMessage, so the
+ * parent doesn't need its own WebSocket.
  *
- * No reconnect logic in PR 6. WS closes → stays closed until next mount.
- * PR 7 will add reconnect-with-backoff if UX warrants it.
+ * Why no parent WS? Both connections would register in CopilotHub under the
+ * same (user, profile, tab, agent) key, and the hub deliberately closes the
+ * prior connection on key collision. The two would clobber each other.
+ * Forwarding via postMessage from copilot.js is cleaner and avoids the second
+ * ticket mint per pinned agent.
+ *
+ * postMessage shape (sent from copilot.js, see copilot.js openConnection):
+ *   { type: "taos-copilot:server-event", agentId, message }
+ *
+ * `message` is the raw server payload — { event: "page-changed", url, title, ... }
  */
-import { mintCopilotTicket } from "@/lib/browser-agent-api";
 import type { AgentEvent } from "@/stores/browser-agent-store";
 
 export interface AgentWsBridgeOptions {
   windowId: string;
   tabId: string;
   agentId: string;
-  profileId: string;
-  /** Called when the WS receives an event. Caller dispatches to stores. */
+  /** The iframe element. Used to verify e.source matches before accepting. */
+  iframe: HTMLIFrameElement;
+  /** Called when the iframe forwards a server event. */
   onEvent: (event: AgentEvent) => void;
-  /** Called once when the WS opens, useful for tests. */
+  /** Kept for API compatibility; never fires (no separate WS). */
   onOpen?: () => void;
-  /** Called when the WS closes (any reason). */
+  /** Called when the listener is removed via close(). */
   onClose?: () => void;
 }
 
 export interface AgentWsHandle {
   close(): void;
-  /** True after onOpen fires; helpful for tests. */
+  /** Always true while the listener is registered; false after close(). */
   readonly isOpen: boolean;
 }
 
-/** Mints a ticket then opens a WS to /api/desktop/browser/copilot.
- * If ticket minting fails (null), the handle's onClose fires immediately
- * and isOpen stays false — caller can decide whether to retry.
+const ALLOWED_EVENT_KINDS: ReadonlyArray<AgentEvent["kind"]> = [
+  "page-changed",
+  "url-changed",
+  "scroll",
+];
+
+/** Register a window-level postMessage listener filtered to events forwarded
+ * from this (windowId, tabId, agentId) iframe. Returns a handle whose close()
+ * removes the listener.
+ *
+ * Synchronous — no ticket round-trip needed. The iframe's own WebSocket is
+ * authenticated separately (see TabRenderer's iframe-side ticket flow).
  */
-export async function openParentWs(opts: AgentWsBridgeOptions): Promise<AgentWsHandle> {
-  const ticket = await mintCopilotTicket(opts.profileId, opts.tabId, opts.agentId);
-  let isOpen = false;
-  let ws: WebSocket | null = null;
-  let closed = false;
+export function openParentWs(opts: AgentWsBridgeOptions): AgentWsHandle {
+  let isOpen = true;
 
-  const handle: AgentWsHandle = {
-    get isOpen() { return isOpen; },
-    close() {
-      closed = true;
-      if (ws) {
-        try { ws.close(); } catch { /* ignore */ }
-      }
-    },
-  };
+  function handleMessage(e: MessageEvent) {
+    // SECURITY: only accept messages from this specific iframe. The iframe
+    // can't fake e.source; cross-frame messages from other origins won't
+    // pass this check.
+    if (e.source !== opts.iframe.contentWindow) return;
 
-  if (!ticket || closed) {
-    if (opts.onClose) opts.onClose();
-    return handle;
-  }
+    const data = e.data;
+    if (!data || typeof data !== "object") return;
+    if (data.type !== "taos-copilot:server-event") return;
+    if (data.agentId !== opts.agentId) return;
 
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  const url = `${proto}://${window.location.host}/api/desktop/browser/copilot?ticket=${encodeURIComponent(ticket.ticket)}`;
-  ws = new WebSocket(url);
+    const msg = data.message;
+    if (!msg || typeof msg !== "object") return;
 
-  ws.addEventListener("open", () => {
-    isOpen = true;
-    if (opts.onOpen) opts.onOpen();
-  });
-
-  ws.addEventListener("message", (ev) => {
-    let raw: Record<string, unknown>;
-    try { raw = JSON.parse(ev.data as string); } catch { return; }
-    if (!raw || typeof raw !== "object") return;
-
-    // Server sends { event: "page-changed", url?, title?, ... }
-    // Normalise to AgentEvent shape: { kind, url?, title?, timestamp }
-    const serverKind = typeof raw.event === "string" ? raw.event : null;
+    const serverKind = typeof msg.event === "string" ? msg.event : null;
     if (!serverKind) return;
 
     const kind = serverKind as AgentEvent["kind"];
-    // Acceptable kinds — guard against unknown event types
-    if (kind !== "page-changed" && kind !== "url-changed" && kind !== "scroll") return;
+    if (!ALLOWED_EVENT_KINDS.includes(kind)) return;
 
     const event: AgentEvent = {
       kind,
-      url: typeof raw.url === "string" ? raw.url : undefined,
-      title: typeof raw.title === "string" ? raw.title : undefined,
-      timestamp: typeof raw.timestamp === "number" ? raw.timestamp : Date.now(),
+      url: typeof msg.url === "string" ? msg.url : undefined,
+      title: typeof msg.title === "string" ? msg.title : undefined,
+      timestamp: typeof msg.timestamp === "number" ? msg.timestamp : Date.now(),
     };
 
     opts.onEvent(event);
-  });
+  }
 
-  ws.addEventListener("close", () => {
-    isOpen = false;
-    if (opts.onClose) opts.onClose();
-  });
+  window.addEventListener("message", handleMessage);
 
-  return handle;
+  return {
+    get isOpen() { return isOpen; },
+    close() {
+      if (!isOpen) return;
+      isOpen = false;
+      window.removeEventListener("message", handleMessage);
+      if (opts.onClose) opts.onClose();
+    },
+  };
 }

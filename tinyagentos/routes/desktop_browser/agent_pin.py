@@ -30,17 +30,22 @@ async def pin_agent(
 
     Returns True iff newly pinned. Raises TooManyPinsError if cap exceeded.
     Raises AgentNotFoundError if agent_exists(agent_id) is False.
+
+    The cap check is enforced atomically inside add_pin_if_under_cap — two
+    concurrent calls cannot both pass when the tab is at N=3.
     """
     if not await agent_exists(agent_id):
         raise AgentNotFoundError(agent_id)
-    count = await browser_store.count_pins_for_tab(
-        user_id=user_id, profile_id=profile_id, tab_id=tab_id,
+    result = await browser_store.add_pin_if_under_cap(
+        user_id=user_id,
+        profile_id=profile_id,
+        tab_id=tab_id,
+        agent_id=agent_id,
+        max_pins=MAX_PINS_PER_TAB,
     )
-    if count >= MAX_PINS_PER_TAB:
+    if result == "at_cap":
         raise TooManyPinsError(MAX_PINS_PER_TAB)
-    inserted = await browser_store.add_pin(
-        user_id=user_id, profile_id=profile_id, tab_id=tab_id, agent_id=agent_id,
-    )
+    inserted = (result == "added")
     if inserted:
         # Auto-grant read_dom for any host. Drive/navigate/see_cookies are PR 7.
         await browser_store.add_capability(

@@ -1,70 +1,34 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { AgentWsBridgeOptions } from "./agent-ws-bridge";
+import { openParentWs, type AgentWsBridgeOptions } from "./agent-ws-bridge";
 
-// vi.mock must be at module top-level (hoisted)
-vi.mock("@/lib/browser-agent-api", () => ({
-  mintCopilotTicket: vi.fn(),
-}));
-
-// Import after mock declaration
-import { openParentWs } from "./agent-ws-bridge";
-import * as browserAgentApi from "@/lib/browser-agent-api";
-
-// ─── Minimal WebSocket mock ───────────────────────────────────────────────────
-
-interface MockWsInstance {
-  url: string;
-  readyState: number;
-  listeners: Record<string, ((payload: unknown) => void)[]>;
-  addEventListener(type: string, fn: (payload: unknown) => void): void;
-  send: ReturnType<typeof vi.fn>;
-  close: ReturnType<typeof vi.fn>;
-  /** Trigger registered listeners for a given event type. */
-  fire(type: string, payload?: unknown): void;
-}
-
-let mockWsInstances: MockWsInstance[];
-let MockWebSocket: ReturnType<typeof vi.fn>;
-
-beforeEach(() => {
-  mockWsInstances = [];
-
-  MockWebSocket = vi.fn().mockImplementation(function (this: MockWsInstance, url: string) {
-    this.url = url;
-    this.readyState = 0; // CONNECTING
-    this.listeners = {};
-    this.addEventListener = function (type: string, fn: (payload: unknown) => void) {
-      if (!this.listeners[type]) this.listeners[type] = [];
-      this.listeners[type].push(fn);
-    };
-    this.send = vi.fn();
-    this.close = vi.fn().mockImplementation(function (this: MockWsInstance) {
-      this.readyState = 3; // CLOSED
-      this.fire("close");
-    });
-    this.fire = function (type: string, payload?: unknown) {
-      (this.listeners[type] ?? []).forEach((fn) => fn(payload ?? {}));
-    };
-    mockWsInstances.push(this);
-  });
-
-  (global as unknown as Record<string, unknown>).WebSocket = MockWebSocket;
-
-  // Reset to the default "success" implementation before each test
-  vi.mocked(browserAgentApi.mintCopilotTicket).mockResolvedValue({
-    ticket: "fake-token",
-    ttl_seconds: 60,
-  });
-});
+/**
+ * In the new architecture (post-Opus whole-branch review), the parent does
+ * NOT open its own WebSocket. Instead, copilot.js (running in the iframe)
+ * forwards server events to the parent via postMessage as
+ *   { type: "taos-copilot:server-event", agentId, message }
+ *
+ * openParentWs registers a window message listener that filters by source
+ * iframe + agentId, normalises message.event → AgentEvent.kind, and calls
+ * the supplied onEvent callback.
+ */
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+interface FakeIframe {
+  contentWindow: object;
+}
+
+function makeIframe(): HTMLIFrameElement {
+  const fakeWin = {};
+  return { contentWindow: fakeWin } as unknown as HTMLIFrameElement;
+}
 
 function makeOpts(overrides?: Partial<AgentWsBridgeOptions>): AgentWsBridgeOptions {
   return {
     windowId: "win-1",
     tabId: "tab-1",
     agentId: "agent-1",
-    profileId: "profile-1",
+    iframe: makeIframe(),
     onEvent: vi.fn(),
     onOpen: vi.fn(),
     onClose: vi.fn(),
@@ -72,52 +36,47 @@ function makeOpts(overrides?: Partial<AgentWsBridgeOptions>): AgentWsBridgeOptio
   };
 }
 
+/** Dispatch a message event with a chosen source. JSDOM's MessageEvent
+ * constructor doesn't honour the `source` option, so we override via
+ * Object.defineProperty before dispatch. */
+function dispatchMessageFrom(source: object | null, data: unknown): void {
+  const ev = new MessageEvent("message", { data });
+  Object.defineProperty(ev, "source", { value: source, configurable: true });
+  window.dispatchEvent(ev);
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe("openParentWs", () => {
-  it("opens a WebSocket with the ticket in the URL", async () => {
+describe("openParentWs (postMessage-based)", () => {
+  it("isOpen is true after creation (no async ticket round-trip)", () => {
     const opts = makeOpts();
-    await openParentWs(opts);
-
-    expect(MockWebSocket).toHaveBeenCalledOnce();
-    const [url] = MockWebSocket.mock.calls[0] as [string];
-    expect(url).toContain("/api/desktop/browser/copilot");
-    expect(url).toContain("ticket=fake-token");
-    expect(url).toMatch(/^ws(s)?:\/\//);
-  });
-
-  it("calls onOpen when the WS open event fires", async () => {
-    const opts = makeOpts();
-    await openParentWs(opts);
-
-    const ws = mockWsInstances[0];
-    expect(opts.onOpen).not.toHaveBeenCalled();
-
-    ws.fire("open");
-    expect(opts.onOpen).toHaveBeenCalledOnce();
-  });
-
-  it("isOpen is true after onOpen fires, false before", async () => {
-    const opts = makeOpts();
-    const handle = await openParentWs(opts);
-
-    expect(handle.isOpen).toBe(false);
-    mockWsInstances[0].fire("open");
+    const handle = openParentWs(opts);
     expect(handle.isOpen).toBe(true);
   });
 
-  it("calls onEvent with transformed AgentEvent when server sends { event: 'page-changed' }", async () => {
+  it("does NOT open a WebSocket (sanity: no fetch/WS APIs touched)", () => {
+    // The whole point of the new design is no WebSocket on the parent.
+    // If a WebSocket constructor gets called we'll see it via global mock.
+    const ctor = vi.fn();
+    (global as unknown as Record<string, unknown>).WebSocket = ctor;
     const opts = makeOpts();
-    await openParentWs(opts);
+    openParentWs(opts);
+    expect(ctor).not.toHaveBeenCalled();
+  });
 
-    const ws = mockWsInstances[0];
-    ws.fire("message", {
-      data: JSON.stringify({
+  it("calls onEvent when iframe forwards a page-changed event", () => {
+    const opts = makeOpts();
+    openParentWs(opts);
+
+    dispatchMessageFrom(opts.iframe.contentWindow, {
+      type: "taos-copilot:server-event",
+      agentId: "agent-1",
+      message: {
         event: "page-changed",
         url: "https://example.com/",
         title: "Example",
         timestamp: 12345,
-      }),
+      },
     });
 
     expect(opts.onEvent).toHaveBeenCalledOnce();
@@ -126,18 +85,22 @@ describe("openParentWs", () => {
     expect(received.url).toBe("https://example.com/");
     expect(received.title).toBe("Example");
     expect(received.timestamp).toBe(12345);
-    // Server's `event` field should not appear in the normalised event
-    expect((received as Record<string, unknown>).event).toBeUndefined();
   });
 
-  it("transforms { event: 'url-changed' } and { event: 'scroll' } correctly", async () => {
+  it("transforms url-changed and scroll kinds", () => {
     const opts = makeOpts();
-    await openParentWs(opts);
+    openParentWs(opts);
 
-    const ws = mockWsInstances[0];
-
-    ws.fire("message", { data: JSON.stringify({ event: "url-changed", url: "https://a.com/" }) });
-    ws.fire("message", { data: JSON.stringify({ event: "scroll" }) });
+    dispatchMessageFrom(opts.iframe.contentWindow, {
+      type: "taos-copilot:server-event",
+      agentId: "agent-1",
+      message: { event: "url-changed", url: "https://a.com/" },
+    });
+    dispatchMessageFrom(opts.iframe.contentWindow, {
+      type: "taos-copilot:server-event",
+      agentId: "agent-1",
+      message: { event: "scroll" },
+    });
 
     const calls = vi.mocked(opts.onEvent).mock.calls;
     expect(calls).toHaveLength(2);
@@ -145,62 +108,78 @@ describe("openParentWs", () => {
     expect(calls[1][0].kind).toBe("scroll");
   });
 
-  it("ignores messages with unknown event kinds", async () => {
+  it("rejects messages whose source is not the iframe (cross-frame protection)", () => {
     const opts = makeOpts();
-    await openParentWs(opts);
+    openParentWs(opts);
 
-    const ws = mockWsInstances[0];
-    ws.fire("message", { data: JSON.stringify({ event: "totally-unknown-event" }) });
+    // A message from a DIFFERENT window object — must be ignored
+    dispatchMessageFrom({}, {
+      type: "taos-copilot:server-event",
+      agentId: "agent-1",
+      message: { event: "page-changed", url: "https://attacker.example/" },
+    });
 
     expect(opts.onEvent).not.toHaveBeenCalled();
   });
 
-  it("ignores malformed messages (non-JSON, no event field)", async () => {
-    const opts = makeOpts();
-    await openParentWs(opts);
+  it("rejects messages with mismatched agentId (multi-pin isolation)", () => {
+    const opts = makeOpts({ agentId: "agent-1" });
+    openParentWs(opts);
 
-    const ws = mockWsInstances[0];
-    ws.fire("message", { data: "not-json" });
-    ws.fire("message", { data: JSON.stringify({ noEventField: true }) });
+    dispatchMessageFrom(opts.iframe.contentWindow, {
+      type: "taos-copilot:server-event",
+      agentId: "agent-2",
+      message: { event: "page-changed", url: "https://example.com/" },
+    });
 
     expect(opts.onEvent).not.toHaveBeenCalled();
   });
 
-  it("calls onClose when WS close fires", async () => {
+  it("ignores messages with unknown event kinds", () => {
     const opts = makeOpts();
-    await openParentWs(opts);
+    openParentWs(opts);
 
-    expect(opts.onClose).not.toHaveBeenCalled();
-    mockWsInstances[0].fire("close");
-    expect(opts.onClose).toHaveBeenCalledOnce();
+    dispatchMessageFrom(opts.iframe.contentWindow, {
+      type: "taos-copilot:server-event",
+      agentId: "agent-1",
+      message: { event: "totally-unknown" },
+    });
+
+    expect(opts.onEvent).not.toHaveBeenCalled();
   });
 
-  it("sets isOpen to false after close fires", async () => {
+  it("ignores messages without the expected type field", () => {
     const opts = makeOpts();
-    const handle = await openParentWs(opts);
+    openParentWs(opts);
 
-    mockWsInstances[0].fire("open");
-    expect(handle.isOpen).toBe(true);
+    dispatchMessageFrom(opts.iframe.contentWindow, {
+      type: "something-else",
+      agentId: "agent-1",
+      message: { event: "page-changed" },
+    });
 
-    mockWsInstances[0].fire("close");
-    expect(handle.isOpen).toBe(false);
+    expect(opts.onEvent).not.toHaveBeenCalled();
   });
 
-  it("handle.close() shuts the underlying WebSocket", async () => {
+  it("ignores malformed payloads (string data, missing message field)", () => {
     const opts = makeOpts();
-    const handle = await openParentWs(opts);
+    openParentWs(opts);
 
-    handle.close();
-    expect(mockWsInstances[0].close).toHaveBeenCalled();
+    dispatchMessageFrom(opts.iframe.contentWindow, "not-an-object");
+    dispatchMessageFrom(opts.iframe.contentWindow, { type: "taos-copilot:server-event", agentId: "agent-1" });
+
+    expect(opts.onEvent).not.toHaveBeenCalled();
   });
 
-  it("uses missing timestamp → Date.now() fallback when timestamp absent from server event", async () => {
+  it("falls back to Date.now() when server event has no timestamp", () => {
     const beforeTs = Date.now();
     const opts = makeOpts();
-    await openParentWs(opts);
+    openParentWs(opts);
 
-    mockWsInstances[0].fire("message", {
-      data: JSON.stringify({ event: "scroll" }),
+    dispatchMessageFrom(opts.iframe.contentWindow, {
+      type: "taos-copilot:server-event",
+      agentId: "agent-1",
+      message: { event: "scroll" },
     });
 
     const afterTs = Date.now();
@@ -209,14 +188,29 @@ describe("openParentWs", () => {
     expect(received.timestamp).toBeLessThanOrEqual(afterTs);
   });
 
-  it("if mintCopilotTicket returns null, calls onClose immediately and isOpen stays false", async () => {
-    vi.mocked(browserAgentApi.mintCopilotTicket).mockResolvedValue(null);
-
+  it("handle.close() removes the listener and fires onClose", () => {
     const opts = makeOpts();
-    const handle = await openParentWs(opts);
+    const handle = openParentWs(opts);
 
-    expect(MockWebSocket).not.toHaveBeenCalled();
-    expect(opts.onClose).toHaveBeenCalledOnce();
+    handle.close();
     expect(handle.isOpen).toBe(false);
+    expect(opts.onClose).toHaveBeenCalledOnce();
+
+    // Subsequent messages should be ignored
+    dispatchMessageFrom(opts.iframe.contentWindow, {
+      type: "taos-copilot:server-event",
+      agentId: "agent-1",
+      message: { event: "page-changed" },
+    });
+    expect(opts.onEvent).not.toHaveBeenCalled();
+  });
+
+  it("close() is idempotent — second call is a no-op", () => {
+    const opts = makeOpts();
+    const handle = openParentWs(opts);
+
+    handle.close();
+    handle.close();
+    expect(opts.onClose).toHaveBeenCalledOnce();
   });
 });

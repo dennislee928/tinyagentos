@@ -145,7 +145,27 @@
     ws.addEventListener('message', function (evt) {
       var msg;
       try { msg = JSON.parse(evt.data); } catch (_e) { return; }
-      if (msg && msg.op && Object.prototype.hasOwnProperty.call(ops, msg.op)) {
+      if (!msg) return;
+
+      // Forward server-emitted events (page-changed, url-changed, etc.) up
+      // to the parent shell via postMessage. The parent's agent-ws-bridge
+      // listens for these, so we don't need a second WebSocket from the
+      // parent (which would clobber this one in the server's hub registry).
+      if (msg.event && window.parent && window.parent !== window) {
+        try {
+          // Target origin "*" — sandboxed iframe can't query parent's origin
+          // without allow-same-origin. The parent's listener verifies
+          // e.source === iframe.contentWindow, which is the equivalent guard.
+          window.parent.postMessage({
+            type: 'taos-copilot:server-event',
+            agentId: agentId,
+            message: msg,
+          }, '*');
+        } catch (_e) { /* parent gone or hostile — ignore */ }
+      }
+
+      // Op dispatch (read ops; drive ops land in PR 7).
+      if (msg.op && Object.prototype.hasOwnProperty.call(ops, msg.op)) {
         var result;
         try {
           result = ops[msg.op](msg.args || {});

@@ -121,6 +121,66 @@ async def test_count_pins_for_tab_increments(store):
 
 
 # ---------------------------------------------------------------------------
+# add_pin_if_under_cap (atomic count+insert)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_add_pin_if_under_cap_returns_added_on_first_insert(store):
+    result = await store.add_pin_if_under_cap(
+        user_id="u1", profile_id="p1", tab_id="t1", agent_id="a",
+        max_pins=4,
+    )
+    assert result == "added"
+
+
+@pytest.mark.asyncio
+async def test_add_pin_if_under_cap_returns_duplicate_on_existing_pin(store):
+    await store.add_pin(user_id="u1", profile_id="p1", tab_id="t1", agent_id="a")
+    result = await store.add_pin_if_under_cap(
+        user_id="u1", profile_id="p1", tab_id="t1", agent_id="a",
+        max_pins=4,
+    )
+    assert result == "duplicate"
+
+
+@pytest.mark.asyncio
+async def test_add_pin_if_under_cap_returns_at_cap_when_full(store):
+    for i in range(4):
+        await store.add_pin(
+            user_id="u1", profile_id="p1", tab_id="t1", agent_id=f"a{i}",
+        )
+    result = await store.add_pin_if_under_cap(
+        user_id="u1", profile_id="p1", tab_id="t1", agent_id="a-new",
+        max_pins=4,
+    )
+    assert result == "at_cap"
+    # Confirm the row was NOT inserted
+    pins = await store.list_pins_for_tab(user_id="u1", profile_id="p1", tab_id="t1")
+    assert len(pins) == 4
+    assert all(p["agent_id"] != "a-new" for p in pins)
+
+
+@pytest.mark.asyncio
+async def test_add_pin_if_under_cap_concurrent_does_not_exceed_cap(store):
+    """Fire 8 concurrent pins against a cap of 4 — at most 4 should succeed."""
+    import asyncio as _asyncio
+
+    results = await _asyncio.gather(*[
+        store.add_pin_if_under_cap(
+            user_id="u1", profile_id="p1", tab_id="t1", agent_id=f"a{i}",
+            max_pins=4,
+        )
+        for i in range(8)
+    ])
+    added = sum(1 for r in results if r == "added")
+    at_cap = sum(1 for r in results if r == "at_cap")
+    assert added <= 4
+    assert added + at_cap == 8
+    pins = await store.list_pins_for_tab(user_id="u1", profile_id="p1", tab_id="t1")
+    assert len(pins) <= 4
+
+
+# ---------------------------------------------------------------------------
 # delete_pin
 # ---------------------------------------------------------------------------
 

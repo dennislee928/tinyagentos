@@ -8,11 +8,14 @@
 import React, { useEffect, useRef, useState, useCallback, KeyboardEvent } from "react";
 import { useBrowserAgentStore } from "@/stores/browser-agent-store";
 import type { AgentMessage, AgentEvent } from "@/stores/browser-agent-store";
-import { listAgents, type AgentDto } from "@/lib/browser-agent-api";
+import { useBrowserStore } from "@/stores/browser-store";
+import { listAgents, unpinAgent, type AgentDto } from "@/lib/browser-agent-api";
 
 export interface AgentPanelProps {
   windowId: string;
   tabId: string;
+  /** Profile id needed for unpin requests. */
+  profileId: string;
   pinnedAgentIds: string[];
 }
 
@@ -40,7 +43,7 @@ function eventIcon(kind: AgentEvent["kind"]): string {
   return "↕";
 }
 
-export function AgentPanel({ windowId, tabId, pinnedAgentIds }: AgentPanelProps) {
+export function AgentPanel({ windowId, tabId, profileId, pinnedAgentIds }: AgentPanelProps) {
   const panelKey = `${windowId}:${tabId}`;
 
   const panel = useBrowserAgentStore((s) => s.panels[panelKey]);
@@ -141,6 +144,24 @@ export function AgentPanel({ windowId, tabId, pinnedAgentIds }: AgentPanelProps)
     closePanel(windowId, tabId);
   }
 
+  async function handleUnpin(agentId: string) {
+    const ok = await unpinAgent(profileId, tabId, agentId);
+    if (!ok) return;
+    useBrowserStore.getState().removePinnedAgent(windowId, tabId, agentId);
+    // If that was the last pinned agent, close the panel — there's nothing
+    // to show in the body.
+    const remaining = pinnedAgentIds.filter((a) => a !== agentId);
+    if (remaining.length === 0) {
+      closePanel(windowId, tabId);
+      return;
+    }
+    // If we just unpinned the active agent, switch to the first remaining.
+    const next = remaining[0];
+    if (agentId === activeAgentId && next) {
+      setActiveAgent(windowId, tabId, next);
+    }
+  }
+
   function sendMessage() {
     if (!inputValue.trim() || !activeAgentId) return;
     appendMessage(windowId, tabId, activeAgentId, {
@@ -209,27 +230,43 @@ export function AgentPanel({ windowId, tabId, pinnedAgentIds }: AgentPanelProps)
           const name = getAgentName(agentId);
           const tabId_ = `agent-tab-${windowId}-${tabId}-${agentId}`;
           return (
-            <button
+            <div
               key={agentId}
-              id={tabId_}
-              role="tab"
-              aria-selected={isActive}
-              onClick={() => handleTabClick(agentId)}
-              title={name}
               className={[
-                "flex items-center gap-1 px-2 py-1 rounded text-xs whitespace-nowrap transition-colors",
+                "group flex items-center gap-1 px-2 py-1 rounded text-xs whitespace-nowrap transition-colors",
                 isActive
                   ? "bg-shell-hover text-shell-text font-medium"
                   : "text-shell-text-secondary hover:bg-shell-hover hover:text-shell-text",
               ].join(" ")}
             >
-              <span
-                aria-hidden="true"
-                className="w-2 h-2 rounded-full flex-shrink-0"
-                style={{ backgroundColor: agentColor(agentId) }}
-              />
-              <span className="max-w-[80px] truncate">{name}</span>
-            </button>
+              <button
+                id={tabId_}
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => handleTabClick(agentId)}
+                title={name}
+                className="flex items-center gap-1 outline-none"
+              >
+                <span
+                  aria-hidden="true"
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: agentColor(agentId) }}
+                />
+                <span className="max-w-[80px] truncate">{name}</span>
+              </button>
+              <button
+                type="button"
+                aria-label={`Unpin ${name}`}
+                title={`Unpin ${name}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleUnpin(agentId);
+                }}
+                className="opacity-0 group-hover:opacity-100 focus:opacity-100 ml-0.5 text-[0.65rem] leading-none rounded hover:bg-shell-bg-deep px-1 py-0.5 transition-opacity"
+              >
+                ✕
+              </button>
+            </div>
           );
         })}
       </div>

@@ -299,11 +299,11 @@ class TestPinAgentService:
     @pytest.mark.asyncio
     async def test_too_many_pins_error_raised(self):
         from tinyagentos.routes.desktop_browser.agent_pin import (
-            pin_agent, TooManyPinsError, MAX_PINS_PER_TAB,
+            pin_agent, TooManyPinsError,
         )
 
         store = AsyncMock()
-        store.count_pins_for_tab.return_value = MAX_PINS_PER_TAB
+        store.add_pin_if_under_cap.return_value = "at_cap"
 
         async def agent_exists(aid: str) -> bool:
             return True
@@ -320,8 +320,7 @@ class TestPinAgentService:
         from tinyagentos.routes.desktop_browser.agent_pin import pin_agent
 
         store = AsyncMock()
-        store.count_pins_for_tab.return_value = 0
-        store.add_pin.return_value = True
+        store.add_pin_if_under_cap.return_value = "added"
 
         async def agent_exists(aid: str) -> bool:
             return True
@@ -343,8 +342,7 @@ class TestPinAgentService:
         from tinyagentos.routes.desktop_browser.agent_pin import pin_agent
 
         store = AsyncMock()
-        store.count_pins_for_tab.return_value = 0
-        store.add_pin.return_value = False  # already pinned
+        store.add_pin_if_under_cap.return_value = "duplicate"
 
         async def agent_exists(aid: str) -> bool:
             return True

@@ -115,8 +115,18 @@ export function Chrome({ windowId }: ChromeProps) {
       <div className="flex-1" />
 
       {/* Agent chip / picker */}
-      <div className="relative">
-        {activeTab.pinnedAgentIds.length === 0 ? (
+      <div className="relative flex items-center gap-1">
+        {activeTab.pinnedAgentIds.length > 0 && (
+          <AgentPresencePill
+            windowId={windowId}
+            tabId={activeTab.id}
+            pinnedAgentIds={activeTab.pinnedAgentIds}
+            triggerRef={agentChipRef}
+          />
+        )}
+        {/* "+ agent" affordance — always visible (until at cap) so users can
+             add a 2nd/3rd/4th agent without remembering Cmd+Shift+A. */}
+        {activeTab.pinnedAgentIds.length < 4 && (
           <button
             ref={agentChipRef}
             type="button"
@@ -129,17 +139,15 @@ export function Chrome({ windowId }: ChromeProps) {
               setManagerOpen(false);
               setPickerOpen((p) => !p);
             }}
-            className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-shell-bg-deep border border-shell-border-subtle text-xs hover:bg-shell-hover"
+            className={
+              activeTab.pinnedAgentIds.length === 0
+                ? "flex items-center gap-1 px-2 py-0.5 rounded-full bg-shell-bg-deep border border-shell-border-subtle text-xs hover:bg-shell-hover"
+                : "flex items-center justify-center w-5 h-5 rounded-full bg-shell-bg-deep border border-shell-border-subtle text-xs hover:bg-shell-hover"
+            }
+            title={activeTab.pinnedAgentIds.length === 0 ? undefined : "Add agent"}
           >
-            + agent
+            {activeTab.pinnedAgentIds.length === 0 ? "+ agent" : "+"}
           </button>
-        ) : (
-          <AgentPresencePill
-            windowId={windowId}
-            tabId={activeTab.id}
-            pinnedAgentIds={activeTab.pinnedAgentIds}
-            triggerRef={agentChipRef}
-          />
         )}
         {pickerOpen && (
           <AgentPickerPopover

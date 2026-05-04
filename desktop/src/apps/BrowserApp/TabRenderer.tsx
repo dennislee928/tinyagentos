@@ -107,11 +107,12 @@ export function TabRenderer({ windowId }: TabRendererProps) {
 
   // WS lifecycle — for each pinned agent on the active tab:
   //   1. Mint an iframe ticket and postMessage taos-copilot:open to the iframe.
-  //   2. Open the parent's own WS via openParentWs to receive page events and
-  //      bump AgentPresencePill's lastEventAt.
-  // Runs whenever the active tab, its pinned agents, or the profile changes.
-  // Cleanup closes all parent WS handles and posts taos-copilot:close to the
-  // iframe so copilot.js tears down the iframe-side WS.
+  //      copilot.js opens the WS and forwards server events back to the parent
+  //      via postMessage.
+  //   2. Register a parent-side message listener via openParentWs so we
+  //      receive forwarded page-changed events and bump the presence pulse.
+  // We do NOT open a second parent WebSocket — both connections would register
+  // under the same hub key and clobber each other.
   const activeTabIdForEffect = win?.activeTabId;
   const pinnedAgentIdsForEffect = win?.tabs.find((t) => t.id === win?.activeTabId)?.pinnedAgentIds ?? [];
   const profileIdForEffect = win?.profileId;
@@ -121,17 +122,19 @@ export function TabRenderer({ windowId }: TabRendererProps) {
 
     const tabId = activeTabIdForEffect;
     const profileId = profileIdForEffect;
+    const iframe = document.querySelector(
+      `iframe[data-tab-id="${tabId}"]`,
+    ) as HTMLIFrameElement | null;
+    if (!iframe) return;
+
     const handles: AgentWsHandle[] = [];
     let cancelled = false;
 
     for (const agentId of pinnedAgentIdsForEffect) {
-      // 1. Mint a separate ticket for the iframe and post it
+      // 1. Mint a ticket for the iframe-side WS and post it.
       mintCopilotTicket(profileId, tabId, agentId).then((ticket) => {
         if (cancelled || !ticket) return;
-        const iframe = document.querySelector(
-          `iframe[data-tab-id="${tabId}"]`,
-        ) as HTMLIFrameElement | null;
-        if (iframe?.contentWindow) {
+        if (iframe.contentWindow) {
           iframe.contentWindow.postMessage(
             { type: "taos-copilot:open", ticket: ticket.ticket, agentId },
             "*",
@@ -139,37 +142,29 @@ export function TabRenderer({ windowId }: TabRendererProps) {
         }
       });
 
-      // 2. Open the parent's own WS to receive page events
-      openParentWs({
+      // 2. Register a parent-side listener for events forwarded by copilot.js.
+      const handle = openParentWs({
         windowId,
         tabId,
         agentId,
-        profileId,
+        iframe,
         onEvent: (event) => {
           const store = useBrowserAgentStore.getState();
           store.bumpEventAt(windowId, tabId, agentId);
           store.appendEvent(windowId, tabId, agentId, event);
         },
-      }).then((handle) => {
-        if (cancelled) {
-          handle.close();
-        } else {
-          handles.push(handle);
-        }
       });
+      handles.push(handle);
     }
 
     return () => {
       cancelled = true;
 
-      // Close all parent WS handles
+      // Close all parent-side listeners
       for (const handle of handles) handle.close();
 
       // Tell the iframe-side copilot.js to close its WS for each agent
-      const iframe = document.querySelector(
-        `iframe[data-tab-id="${tabId}"]`,
-      ) as HTMLIFrameElement | null;
-      if (iframe?.contentWindow) {
+      if (iframe.contentWindow) {
         for (const agentId of pinnedAgentIdsForEffect) {
           iframe.contentWindow.postMessage(
             { type: "taos-copilot:close", agentId },
@@ -236,7 +231,7 @@ export function TabRenderer({ windowId }: TabRendererProps) {
             >
               <iframe
                 title={tab.title || tab.url || "Browser tab"}
-                src={proxiedSrc(win.profileId, tab.url)}
+                src={proxiedSrc(win.profileId, tab.url, tab.id)}
                 data-tab-id={tab.id}
                 // sandbox: allow-same-origin intentionally OMITTED. The proxy
                 // serves on the same origin as the shell; combining
@@ -284,6 +279,7 @@ export function TabRenderer({ windowId }: TabRendererProps) {
         <AgentPanel
           windowId={windowId}
           tabId={win.activeTabId}
+          profileId={win.profileId}
           pinnedAgentIds={pinnedAgentIds}
         />
       )}
@@ -319,11 +315,18 @@ function DiscardedPlaceholder({ tab, onReload }: DiscardedPlaceholderProps) {
   );
 }
 
-/** Build the proxied iframe src. about:blank passes through unproxied. */
-function proxiedSrc(profileId: string, url: string): string {
+/** Build the proxied iframe src. about:blank passes through unproxied.
+ * tab_id is included so the proxy can fan out page-changed events to
+ * any agents pinned to the tab (see proxy.py + CopilotHub).
+ */
+function proxiedSrc(profileId: string, url: string, tabId: string): string {
   if (!url || url === "about:blank" || url.startsWith("about:")) {
     return "about:blank";
   }
-  const params = new URLSearchParams({ profile_id: profileId, url });
+  const params = new URLSearchParams({
+    profile_id: profileId,
+    url,
+    tab_id: tabId,
+  });
   return `/api/desktop/browser/proxy?${params.toString()}`;
 }
