@@ -5,10 +5,16 @@ import {
   MAX_PANEL_WIDTH,
   DEFAULT_PANEL_WIDTH,
   WATCHING_DECAY_MS,
+  MAX_RECENT_EVENTS,
 } from "./browser-agent-store";
 
 beforeEach(() => {
-  useBrowserAgentStore.setState({ panels: {}, lastEventAt: {} });
+  useBrowserAgentStore.setState({
+    panels: {},
+    lastEventAt: {},
+    messages: {},
+    recentEvents: {},
+  });
 });
 
 afterEach(() => {
@@ -171,5 +177,92 @@ describe("browser-agent-store: bumpEventAt + isWatching", () => {
     expect(stored).toBe(explicitTs);
     // Should still be watching (1s < WATCHING_DECAY_MS=3s)
     expect(useBrowserAgentStore.getState().isWatching("win-1", "tab-1", "agent-a")).toBe(true);
+  });
+});
+
+describe("browser-agent-store: appendMessage", () => {
+  it("appends a message to an empty thread", () => {
+    const s = useBrowserAgentStore.getState();
+    s.appendMessage("win-1", "tab-1", "agent-a", {
+      id: "msg-1",
+      author: "user",
+      content: "Hello",
+      timestamp: 1000,
+    });
+
+    const msgs = useBrowserAgentStore.getState().messages["win-1:tab-1:agent-a"];
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].content).toBe("Hello");
+    expect(msgs[0].author).toBe("user");
+  });
+
+  it("appends multiple messages in order", () => {
+    const s = useBrowserAgentStore.getState();
+    s.appendMessage("win-1", "tab-1", "agent-a", { id: "1", author: "user", content: "First", timestamp: 1000 });
+    s.appendMessage("win-1", "tab-1", "agent-a", { id: "2", author: "agent", content: "Second", timestamp: 2000 });
+
+    const msgs = useBrowserAgentStore.getState().messages["win-1:tab-1:agent-a"];
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].content).toBe("First");
+    expect(msgs[1].content).toBe("Second");
+  });
+
+  it("keeps threads for different (tab, agent) pairs separate", () => {
+    const s = useBrowserAgentStore.getState();
+    s.appendMessage("win-1", "tab-1", "agent-a", { id: "1", author: "user", content: "Tab1 A", timestamp: 1000 });
+    s.appendMessage("win-1", "tab-1", "agent-b", { id: "2", author: "user", content: "Tab1 B", timestamp: 1000 });
+
+    const msgsA = useBrowserAgentStore.getState().messages["win-1:tab-1:agent-a"];
+    const msgsB = useBrowserAgentStore.getState().messages["win-1:tab-1:agent-b"];
+    expect(msgsA).toHaveLength(1);
+    expect(msgsB).toHaveLength(1);
+    expect(msgsA[0].content).toBe("Tab1 A");
+    expect(msgsB[0].content).toBe("Tab1 B");
+  });
+});
+
+describe("browser-agent-store: appendEvent", () => {
+  it("appends an event to an empty list", () => {
+    const s = useBrowserAgentStore.getState();
+    s.appendEvent("win-1", "tab-1", "agent-a", {
+      kind: "page-changed",
+      title: "Example",
+      url: "https://example.com",
+      timestamp: 1000,
+    });
+
+    const events = useBrowserAgentStore.getState().recentEvents["win-1:tab-1:agent-a"];
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe("page-changed");
+    expect(events[0].title).toBe("Example");
+  });
+
+  it(`caps events at MAX_RECENT_EVENTS (${MAX_RECENT_EVENTS})`, () => {
+    const s = useBrowserAgentStore.getState();
+    for (let i = 0; i < MAX_RECENT_EVENTS + 2; i++) {
+      s.appendEvent("win-1", "tab-1", "agent-a", {
+        kind: "url-changed",
+        url: `https://example.com/${i}`,
+        timestamp: 1000 + i,
+      });
+    }
+
+    const events = useBrowserAgentStore.getState().recentEvents["win-1:tab-1:agent-a"];
+    expect(events).toHaveLength(MAX_RECENT_EVENTS);
+    // Should keep the most recent events (last MAX_RECENT_EVENTS)
+    expect(events[events.length - 1].url).toBe(`https://example.com/${MAX_RECENT_EVENTS + 1}`);
+  });
+
+  it("keeps events for different (tab, agent) pairs separate", () => {
+    const s = useBrowserAgentStore.getState();
+    s.appendEvent("win-1", "tab-1", "agent-a", { kind: "scroll", timestamp: 1000 });
+    s.appendEvent("win-1", "tab-1", "agent-b", { kind: "page-changed", title: "B", timestamp: 1000 });
+
+    const eventsA = useBrowserAgentStore.getState().recentEvents["win-1:tab-1:agent-a"];
+    const eventsB = useBrowserAgentStore.getState().recentEvents["win-1:tab-1:agent-b"];
+    expect(eventsA).toHaveLength(1);
+    expect(eventsB).toHaveLength(1);
+    expect(eventsA[0].kind).toBe("scroll");
+    expect(eventsB[0].kind).toBe("page-changed");
   });
 });

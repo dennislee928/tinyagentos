@@ -11,6 +11,24 @@ export interface AgentPanelState {
   width: number;
 }
 
+/** A chat message in the local in-memory thread for a (tab, agent) pair. */
+export interface AgentMessage {
+  id: string;
+  author: "user" | "agent";
+  content: string;
+  timestamp: number;
+}
+
+/** A recent browser event recorded per (tab, agent). */
+export interface AgentEvent {
+  kind: "page-changed" | "url-changed" | "scroll";
+  url?: string;
+  title?: string;
+  timestamp: number;
+}
+
+const MAX_RECENT_EVENTS = 5;
+
 export interface BrowserAgentState {
   /** Per-(windowId, tabId) panel state. Key: `${windowId}:${tabId}`. */
   panels: Record<string, AgentPanelState>;
@@ -19,6 +37,12 @@ export interface BrowserAgentState {
    * Used by AgentPresencePill to compute the "watching" pulse state.
    * Key: `${windowId}:${tabId}:${agentId}`. */
   lastEventAt: Record<string, number>;
+
+  /** Chat thread per (tab, agent). Key: `${windowId}:${tabId}:${agentId}`. */
+  messages: Record<string, AgentMessage[]>;
+
+  /** Recent page events per (tab, agent). Key: same. Capped at last 5 per key. */
+  recentEvents: Record<string, AgentEvent[]>;
 
   openPanel(windowId: string, tabId: string, agentId: string): void;
   closePanel(windowId: string, tabId: string): void;
@@ -29,11 +53,16 @@ export interface BrowserAgentState {
 
   /** True if `lastEventAt` for this key is within WATCHING_DECAY_MS of now. */
   isWatching(windowId: string, tabId: string, agentId: string): boolean;
+
+  appendMessage(windowId: string, tabId: string, agentId: string, message: AgentMessage): void;
+  appendEvent(windowId: string, tabId: string, agentId: string, event: AgentEvent): void;
 }
 
 export const useBrowserAgentStore = create<BrowserAgentState>((set, get) => ({
   panels: {},
   lastEventAt: {},
+  messages: {},
+  recentEvents: {},
 
   openPanel(windowId, tabId, agentId) {
     set((state) => {
@@ -119,7 +148,34 @@ export const useBrowserAgentStore = create<BrowserAgentState>((set, get) => ({
     if (!ts) return false;
     return Date.now() - ts < WATCHING_DECAY_MS;
   },
+
+  appendMessage(windowId, tabId, agentId, message) {
+    set((state) => {
+      const key = `${windowId}:${tabId}:${agentId}`;
+      const existing = state.messages[key] ?? [];
+      return {
+        messages: {
+          ...state.messages,
+          [key]: [...existing, message],
+        },
+      };
+    });
+  },
+
+  appendEvent(windowId, tabId, agentId, event) {
+    set((state) => {
+      const key = `${windowId}:${tabId}:${agentId}`;
+      const existing = state.recentEvents[key] ?? [];
+      const updated = [...existing, event].slice(-MAX_RECENT_EVENTS);
+      return {
+        recentEvents: {
+          ...state.recentEvents,
+          [key]: updated,
+        },
+      };
+    });
+  },
 }));
 
-// Re-export the constants for tests/callers
-export { MIN_PANEL_WIDTH, MAX_PANEL_WIDTH, DEFAULT_PANEL_WIDTH, WATCHING_DECAY_MS };
+// Re-export constants for tests/callers
+export { MIN_PANEL_WIDTH, MAX_PANEL_WIDTH, DEFAULT_PANEL_WIDTH, WATCHING_DECAY_MS, MAX_RECENT_EVENTS };

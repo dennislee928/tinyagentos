@@ -20,8 +20,10 @@
 import { useEffect } from "react";
 import { useBrowserStore } from "@/stores/browser-store";
 import { useBrowserSettingsStore } from "@/stores/browser-settings-store";
+import { useBrowserAgentStore } from "@/stores/browser-agent-store";
 import { detectLiveExclusion } from "./live-exclusion";
 import { ReaderMode } from "./ReaderMode";
+import { AgentPanel } from "./AgentPanel";
 import type { Tab } from "./types";
 
 export const DISCARD_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -99,58 +101,77 @@ export function TabRenderer({ windowId }: TabRendererProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [windowId, !!win]);
 
+  // Subscribe to panel state so TabRenderer re-renders when panel opens/closes
+  const panel = useBrowserAgentStore((s) => s.panels[`${windowId}:${win?.activeTabId}`]);
+  const panelIsOpen = panel?.isOpen ?? false;
+
   if (!win) return null;
 
+  const activeTab = win.tabs.find((t) => t.id === win.activeTabId);
+  const pinnedAgentIds = activeTab?.pinnedAgentIds ?? [];
+
   return (
-    <div className="relative flex-1 bg-shell-bg-deep overflow-hidden">
-      {win.tabs.map((tab) => {
-        const isActive = tab.id === win.activeTabId;
-        if (tab.state === "discarded") {
-          return isActive ? (
-            <DiscardedPlaceholder
+    <div className="flex flex-1 overflow-hidden bg-shell-bg-deep">
+      {/* Iframe pool — relative container so iframes can position absolutely */}
+      <div className="relative flex-1 overflow-hidden">
+        {win.tabs.map((tab) => {
+          const isActive = tab.id === win.activeTabId;
+          if (tab.state === "discarded") {
+            return isActive ? (
+              <DiscardedPlaceholder
+                key={tab.id}
+                tab={tab}
+                onReload={() => markTabLive(windowId, tab.id)}
+              />
+            ) : null;
+          }
+
+          const showReader = isActive && !!tab.readerActive && !!tab.readerExtract;
+
+          return (
+            <div
               key={tab.id}
-              tab={tab}
-              onReload={() => markTabLive(windowId, tab.id)}
-            />
-          ) : null;
-        }
+              style={{ display: isActive ? "contents" : "none" }}
+              data-window-tab={tab.id}
+            >
+              <iframe
+                title={tab.title || tab.url || "Browser tab"}
+                src={proxiedSrc(win.profileId, tab.url)}
+                data-tab-id={tab.id}
+                // sandbox: allow-same-origin intentionally OMITTED. The proxy
+                // serves on the same origin as the shell; combining
+                // allow-same-origin + allow-scripts would let proxied JS reach
+                // up into the parent and remove this attribute. The HTTPS+DNS
+                // Foundations brainstorm will land an isolated subdomain that
+                // makes allow-same-origin safe to add back.
+                sandbox="allow-scripts allow-forms allow-popups allow-downloads"
+                style={{
+                  display: isActive && !showReader ? "block" : "none",
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  border: "none",
+                  transform: tab.zoom !== 1 ? `scale(${tab.zoom})` : undefined,
+                  transformOrigin: "top left",
+                }}
+              />
+              {showReader && (
+                <ReaderMode tab={tab} windowId={windowId} />
+              )}
+            </div>
+          );
+        })}
+      </div>
 
-        const showReader = isActive && !!tab.readerActive && !!tab.readerExtract;
-
-        return (
-          <div
-            key={tab.id}
-            style={{ display: isActive ? "contents" : "none" }}
-            data-window-tab={tab.id}
-          >
-            <iframe
-              title={tab.title || tab.url || "Browser tab"}
-              src={proxiedSrc(win.profileId, tab.url)}
-              data-tab-id={tab.id}
-              // sandbox: allow-same-origin intentionally OMITTED. The proxy
-              // serves on the same origin as the shell; combining
-              // allow-same-origin + allow-scripts would let proxied JS reach
-              // up into the parent and remove this attribute. The HTTPS+DNS
-              // Foundations brainstorm will land an isolated subdomain that
-              // makes allow-same-origin safe to add back.
-              sandbox="allow-scripts allow-forms allow-popups allow-downloads"
-              style={{
-                display: isActive && !showReader ? "block" : "none",
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                border: "none",
-                transform: tab.zoom !== 1 ? `scale(${tab.zoom})` : undefined,
-                transformOrigin: "top left",
-              }}
-            />
-            {showReader && (
-              <ReaderMode tab={tab} windowId={windowId} />
-            )}
-          </div>
-        );
-      })}
+      {/* Agent panel — renders to the right of the iframe; iframe squeezes via flex */}
+      {panelIsOpen && pinnedAgentIds.length > 0 && (
+        <AgentPanel
+          windowId={windowId}
+          tabId={win.activeTabId}
+          pinnedAgentIds={pinnedAgentIds}
+        />
+      )}
     </div>
   );
 }
