@@ -6,6 +6,7 @@ via respx (already in dev deps).
 """
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -202,3 +203,198 @@ class TestResponseSizeCap:
         assert resp.status_code == 502
         body = resp.json()
         assert "too large" in body.get("error", "").lower()
+
+
+# ---------------------------------------------------------------------------
+# Helper shared across TestPageChangedBroadcast tests
+# ---------------------------------------------------------------------------
+
+_SSRF_PATCH = patch(
+    "tinyagentos.routes.desktop_browser.ssrf.socket.getaddrinfo",
+    return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+)
+
+_EXAMPLE_HTML = b"<html><head><title>Example</title></head><body>Hello world</body></html>"
+
+
+@pytest.mark.asyncio
+class TestPageChangedBroadcast:
+    """The proxy emits a page-changed event to copilot_hub when tab_id is supplied."""
+
+    @respx.mock
+    async def test_broadcast_with_tab_id_and_html(self, client, app):
+        """Proxy with tab_id + HTML response → push_event_to_pinned called once."""
+        captured = []
+
+        async def fake_push(*, user_id, profile_id, tab_id, event):
+            captured.append(
+                {"user_id": user_id, "profile_id": profile_id, "tab_id": tab_id, "event": event}
+            )
+
+        app.state.copilot_hub.push_event_to_pinned = fake_push
+
+        respx.get("http://example.com/page").mock(
+            return_value=Response(
+                200,
+                content=_EXAMPLE_HTML,
+                headers={"content-type": "text/html"},
+            )
+        )
+
+        with _SSRF_PATCH:
+            await client.get(
+                "/api/desktop/browser/proxy",
+                params={
+                    "profile_id": "personal",
+                    "url": "http://example.com/page",
+                    "tab_id": "tab-abc",
+                },
+            )
+
+        # Allow the create_task'd broadcast to be scheduled and run.
+        await asyncio.sleep(0.05)
+
+        assert len(captured) == 1
+        ev = captured[0]["event"]
+        assert ev["event"] == "page-changed"
+        assert ev["url"] == "http://example.com/page"
+        assert "extract" in ev
+        assert "title" in ev
+        assert "timestamp" in ev
+        assert captured[0]["tab_id"] == "tab-abc"
+
+    @respx.mock
+    async def test_no_broadcast_without_tab_id(self, client, app):
+        """Proxy without tab_id → no broadcast."""
+        captured = []
+
+        async def fake_push(*, user_id, profile_id, tab_id, event):
+            captured.append(event)
+
+        app.state.copilot_hub.push_event_to_pinned = fake_push
+
+        respx.get("http://example.com/page").mock(
+            return_value=Response(
+                200,
+                content=_EXAMPLE_HTML,
+                headers={"content-type": "text/html"},
+            )
+        )
+
+        with _SSRF_PATCH:
+            await client.get(
+                "/api/desktop/browser/proxy",
+                params={"profile_id": "personal", "url": "http://example.com/page"},
+            )
+
+        await asyncio.sleep(0.05)
+        assert captured == []
+
+    @respx.mock
+    async def test_no_broadcast_for_non_html(self, client, app):
+        """Proxy with tab_id but non-HTML response (image) → no broadcast."""
+        captured = []
+
+        async def fake_push(*, user_id, profile_id, tab_id, event):
+            captured.append(event)
+
+        app.state.copilot_hub.push_event_to_pinned = fake_push
+
+        respx.get("http://example.com/img.png").mock(
+            return_value=Response(
+                200,
+                content=b"\x89PNG\r\n\x1a\n" + b"X" * 20,
+                headers={"content-type": "image/png"},
+            )
+        )
+
+        with _SSRF_PATCH:
+            await client.get(
+                "/api/desktop/browser/proxy",
+                params={
+                    "profile_id": "personal",
+                    "url": "http://example.com/img.png",
+                    "tab_id": "tab-abc",
+                },
+            )
+
+        await asyncio.sleep(0.05)
+        assert captured == []
+
+    @respx.mock
+    async def test_extract_failure_does_not_prevent_broadcast(self, client, app):
+        """If extract_readable raises, the page-changed event still fires."""
+        captured = []
+
+        async def fake_push(*, user_id, profile_id, tab_id, event):
+            captured.append(event)
+
+        app.state.copilot_hub.push_event_to_pinned = fake_push
+
+        respx.get("http://example.com/page").mock(
+            return_value=Response(
+                200,
+                content=_EXAMPLE_HTML,
+                headers={"content-type": "text/html"},
+            )
+        )
+
+        with _SSRF_PATCH:
+            with patch(
+                "tinyagentos.routes.desktop_browser.proxy.extract_readable",
+                side_effect=RuntimeError("extraction boom"),
+            ):
+                await client.get(
+                    "/api/desktop/browser/proxy",
+                    params={
+                        "profile_id": "personal",
+                        "url": "http://example.com/page",
+                        "tab_id": "tab-abc",
+                    },
+                )
+
+        await asyncio.sleep(0.05)
+
+        assert len(captured) == 1
+        assert captured[0]["event"] == "page-changed"
+        assert captured[0]["extract"] == ""
+        assert captured[0]["title"] == ""
+
+    @respx.mock
+    async def test_broadcast_extract_truncated_to_4000_chars(self, client, app):
+        """Long page → extract is capped at 4000 chars in the event."""
+        captured = []
+
+        async def fake_push(*, user_id, profile_id, tab_id, event):
+            captured.append(event)
+
+        app.state.copilot_hub.push_event_to_pinned = fake_push
+
+        respx.get("http://example.com/page").mock(
+            return_value=Response(
+                200,
+                content=_EXAMPLE_HTML,
+                headers={"content-type": "text/html"},
+            )
+        )
+
+        long_text = "A" * 8000
+
+        with _SSRF_PATCH:
+            with patch(
+                "tinyagentos.routes.desktop_browser.proxy.extract_readable",
+                return_value={"title": "Big Page", "text": long_text, "html": "", "word_count": 1},
+            ):
+                await client.get(
+                    "/api/desktop/browser/proxy",
+                    params={
+                        "profile_id": "personal",
+                        "url": "http://example.com/page",
+                        "tab_id": "tab-abc",
+                    },
+                )
+
+        await asyncio.sleep(0.05)
+
+        assert len(captured) == 1
+        assert len(captured[0]["extract"]) == 4000
