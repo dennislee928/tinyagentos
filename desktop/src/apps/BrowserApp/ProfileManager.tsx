@@ -17,6 +17,7 @@ import {
   deleteProfile,
   type Profile,
 } from "@/lib/browser-profile-api";
+import { useBrowserStore } from "@/stores/browser-store";
 
 const COLOR_SWATCHES = [
   "#6c8df0",
@@ -69,11 +70,29 @@ export function ProfileManager({ activeProfileId, onClose }: ProfileManagerProps
 
   async function handleDelete(id: string) {
     const ok = await deleteProfile(id);
-    if (ok) {
-      await reload();
-    } else {
+    if (!ok) {
       setError("Delete failed (cannot delete last profile)");
+      setConfirmDeleteId(null);
+      return;
     }
+
+    // Re-read profiles from server (UI list update + fallback computation)
+    const fresh = await listProfiles();
+    setProfiles(fresh);
+
+    // Recover any windows that were pointing at the just-deleted profile.
+    // Without this, those windows would orphan onto a non-existent profile_id
+    // and the proxy + profile chip would silently break.
+    const fallback = fresh?.[0]?.profile_id;
+    if (fallback) {
+      const windows = useBrowserStore.getState().windows;
+      for (const win of Object.values(windows)) {
+        if (win.profileId === id) {
+          useBrowserStore.getState().switchProfile(win.windowId, fallback);
+        }
+      }
+    }
+
     setConfirmDeleteId(null);
   }
 

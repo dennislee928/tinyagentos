@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ProfileManager } from "./ProfileManager";
+import { useBrowserStore } from "@/stores/browser-store";
 
 const originalFetch = global.fetch;
 
@@ -189,5 +190,167 @@ describe("ProfileManager — close", () => {
     await waitFor(() => screen.getByText("Personal"));
     fireEvent.click(screen.getByLabelText(/close manager/i));
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe("ProfileManager — orphan recovery", () => {
+  beforeEach(() => {
+    // Reset browser store to a clean slate before each test
+    useBrowserStore.setState({ windows: {} });
+  });
+
+  it("Test A: recovers orphan windows in other windows after delete", async () => {
+    // Set up two windows: window-a on personal, window-b on work
+    useBrowserStore.getState().createWindow("window-a", "personal");
+    useBrowserStore.getState().createWindow("window-b", "work");
+
+    // Mock: DELETE succeeds, then GET list returns only personal (work was removed)
+    global.fetch = vi.fn().mockImplementation((url: string, opts: any) => {
+      if (opts?.method === "DELETE") {
+        return Promise.resolve({ ok: true, status: 204 });
+      }
+      // GET /profiles — return only personal after delete
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          profiles: [
+            { profile_id: "personal", name: "Personal", color: "#6c8df0", created_at: 0 },
+          ],
+        }),
+      });
+    });
+
+    // Render ProfileManager as if the user in window-a opened it (active = personal)
+    render(
+      <ProfileManager
+        activeProfileId="personal"
+        onClose={() => {}}
+      />,
+    );
+
+    // Wait for the initial profile list (which initially has personal + work)
+    // But we've already set up fetch to return only personal, so wait for Work to appear
+    // via the initial load mock — we need to override the initial load too.
+    // Let's wait for the list to settle: the first GET returns personal only (no work).
+    // Because the fetch is mocked to return personal-only for ALL GETs, the list
+    // will show only Personal. We won't see Work in the UI.
+    // To properly test the flow, we need Work in the initial list.
+    // Re-mock: first GET returns both, DELETE succeeds, second GET returns only personal.
+    global.fetch = vi.fn()
+      .mockImplementationOnce(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            profiles: [
+              { profile_id: "personal", name: "Personal", color: "#6c8df0", created_at: 0 },
+              { profile_id: "work", name: "Work", color: "#f5b86b", created_at: 0 },
+            ],
+          }),
+        }),
+      )
+      .mockImplementationOnce(() =>
+        Promise.resolve({ ok: true, status: 204 }),
+      )
+      .mockImplementationOnce(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            profiles: [
+              { profile_id: "personal", name: "Personal", color: "#6c8df0", created_at: 0 },
+            ],
+          }),
+        }),
+      );
+
+    // Re-render with correct mock sequence
+    const { unmount } = render(
+      <ProfileManager
+        activeProfileId="personal"
+        onClose={() => {}}
+      />,
+    );
+
+    await waitFor(() => screen.getAllByText("Work")[0]);
+
+    // Click delete on Work
+    const deleteBtns = screen.getAllByLabelText(/delete profile work/i);
+    fireEvent.click(deleteBtns[deleteBtns.length - 1]);
+
+    // Confirm the deletion
+    await waitFor(() => screen.getAllByText(/this also clears all saved cookies/i)[0]);
+    const confirmBtns = screen.getAllByLabelText(/confirm delete/i);
+    fireEvent.click(confirmBtns[confirmBtns.length - 1]);
+
+    // After delete completes, window-b should have been switched to personal
+    await waitFor(() => {
+      const windowB = useBrowserStore.getState().windows["window-b"];
+      expect(windowB?.profileId).toBe("personal");
+    });
+
+    unmount();
+  });
+
+  it("Test B: no switchProfile called when deleted profile is not in any window", async () => {
+    // Set up a single window on personal; work profile is not in any window
+    useBrowserStore.getState().createWindow("window-a", "personal");
+
+    // Spy on switchProfile
+    const switchProfileSpy = vi.spyOn(useBrowserStore.getState(), "switchProfile");
+
+    global.fetch = vi.fn()
+      .mockImplementationOnce(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            profiles: [
+              { profile_id: "personal", name: "Personal", color: "#6c8df0", created_at: 0 },
+              { profile_id: "work", name: "Work", color: "#f5b86b", created_at: 0 },
+            ],
+          }),
+        }),
+      )
+      .mockImplementationOnce(() =>
+        Promise.resolve({ ok: true, status: 204 }),
+      )
+      .mockImplementationOnce(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            profiles: [
+              { profile_id: "personal", name: "Personal", color: "#6c8df0", created_at: 0 },
+            ],
+          }),
+        }),
+      );
+
+    render(
+      <ProfileManager
+        activeProfileId="personal"
+        onClose={() => {}}
+      />,
+    );
+
+    await waitFor(() => screen.getByText("Work"));
+
+    // Click delete on Work
+    const deleteBtns = screen.getAllByLabelText(/delete profile work/i);
+    fireEvent.click(deleteBtns[0]);
+
+    await waitFor(() => screen.getByText(/this also clears all saved cookies/i));
+    fireEvent.click(screen.getByLabelText(/confirm delete/i));
+
+    // After delete, window-a should still be on personal (no switch needed)
+    await waitFor(() => {
+      const windowA = useBrowserStore.getState().windows["window-a"];
+      expect(windowA?.profileId).toBe("personal");
+    });
+
+    // switchProfile should NOT have been called (no window was on work)
+    expect(switchProfileSpy).not.toHaveBeenCalled();
   });
 });
