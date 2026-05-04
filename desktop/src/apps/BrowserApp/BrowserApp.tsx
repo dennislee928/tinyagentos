@@ -15,12 +15,17 @@
  */
 import { useEffect, useState } from "react";
 import { useBrowserStore } from "@/stores/browser-store";
+import { useProcessStore } from "@/stores/process-store";
 import { Chrome } from "./Chrome";
 import { TabStrip } from "./TabStrip";
 import { AddressBar } from "./AddressBar";
 import { TabRenderer } from "./TabRenderer";
 import { useBrowserKeyboardShortcuts } from "./keyboard";
 import { FindInPage } from "./FindInPage";
+import { TabOverview } from "./TabOverview";
+import { WindowChooser } from "./WindowChooser";
+import { useIsMobile } from "@/hooks/use-is-mobile";
+import { Layers, ListChecks } from "lucide-react";
 
 const DEFAULT_PROFILE_ID = "personal";
 
@@ -31,7 +36,12 @@ interface BrowserAppProps {
 export function BrowserApp({ windowId }: BrowserAppProps) {
   const win = useBrowserStore((s) => s.windows[windowId]);
   const createWindow = useBrowserStore((s) => s.createWindow);
+  const setActiveTab = useBrowserStore((s) => s.setActiveTab);
+  const focusWindow = useProcessStore((s) => s.focusWindow);
+  const isMobile = useIsMobile(600);
   const [findOpen, setFindOpen] = useState(false);
+  const [tabOverviewOpen, setTabOverviewOpen] = useState(false);
+  const [windowChooserOpen, setWindowChooserOpen] = useState(false);
 
   // Auto-create on first mount. createWindow is idempotent so calling
   // it when the window already exists (e.g. restored by persistence)
@@ -50,6 +60,56 @@ export function BrowserApp({ windowId }: BrowserAppProps) {
   // the createWindow set call). Until then render an empty placeholder.
   if (!win) {
     return <div className="flex-1 bg-shell-bg-deep" />;
+  }
+
+  if (isMobile) {
+    return (
+      <div className="flex flex-col h-full bg-shell-bg overflow-hidden relative">
+        {windowChooserOpen && (
+          <WindowChooser
+            currentWindowId={windowId}
+            onSelect={(id) => {
+              if (id !== windowId) focusWindow(id);
+            }}
+            onClose={() => setWindowChooserOpen(false)}
+          />
+        )}
+
+        <div className="flex-1 relative overflow-hidden">
+          <TabRenderer windowId={windowId} />
+          {tabOverviewOpen && (
+            <TabOverview
+              windowId={windowId}
+              onSelect={(id) => setActiveTab(windowId, id)}
+              onClose={() => setTabOverviewOpen(false)}
+            />
+          )}
+          {findOpen && (
+            <FindInPage windowId={windowId} onClose={() => setFindOpen(false)} />
+          )}
+        </div>
+
+        <div className="flex items-center gap-1 px-2 py-1 bg-shell-surface border-t border-shell-border-subtle">
+          <button
+            type="button"
+            aria-label="Browser windows"
+            onClick={() => setWindowChooserOpen(true)}
+            className="p-1.5 rounded hover:bg-shell-hover"
+          >
+            <Layers size={14} />
+          </button>
+          <AddressBar windowId={windowId} />
+          <button
+            type="button"
+            aria-label="Tab overview"
+            onClick={() => setTabOverviewOpen(true)}
+            className="p-1.5 rounded hover:bg-shell-hover"
+          >
+            <ListChecks size={14} />
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
