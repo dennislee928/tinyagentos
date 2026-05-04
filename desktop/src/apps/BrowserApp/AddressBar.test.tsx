@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
-import { AddressBar } from "./AddressBar";
+import { AddressBar, READER_MIN_WORD_COUNT } from "./AddressBar";
 import { useBrowserStore } from "@/stores/browser-store";
 import * as extractApi from "@/lib/browser-extract-api";
 
@@ -249,6 +249,47 @@ describe("AddressBar — reader toggle", () => {
     });
 
     expect(extractSpy).toHaveBeenCalledWith("personal", "https://a.test/");
+  });
+
+  it("stale extract result is discarded when URL changes before the fetch resolves", async () => {
+    const tabId = useBrowserStore.getState().getWindow(TEST_WINDOW_ID)!.tabs[0].id;
+    useBrowserStore.getState().navigateTab(TEST_WINDOW_ID, tabId, "https://original.test/");
+
+    // Deferred promise — we control when it resolves
+    let resolveExtract!: (v: Awaited<ReturnType<typeof extractApi.extractReadable>>) => void;
+    const deferredPromise = new Promise<Awaited<ReturnType<typeof extractApi.extractReadable>>>(
+      (res) => { resolveExtract = res; },
+    );
+    vi.spyOn(extractApi, "extractReadable").mockReturnValue(deferredPromise);
+
+    render(<AddressBar windowId={TEST_WINDOW_ID} />);
+    const input = screen.getByLabelText("Address") as HTMLInputElement;
+
+    // Focus triggers the fetch for https://original.test/
+    await act(async () => {
+      fireEvent.focus(input);
+    });
+
+    // Navigate to a different URL before the fetch resolves
+    await act(async () => {
+      useBrowserStore.getState().navigateTab(TEST_WINDOW_ID, tabId, "https://new.test/");
+    });
+
+    // Now resolve the extract with data for the OLD url
+    await act(async () => {
+      resolveExtract({
+        title: "Stale Article",
+        text: "stale content",
+        html: "<p>stale content</p>",
+        word_count: READER_MIN_WORD_COUNT + 50,
+      });
+    });
+
+    // The tab should NOT have readerExtract set (stale write discarded)
+    const tab = useBrowserStore.getState().windows[TEST_WINDOW_ID]?.tabs.find(
+      (t) => t.id === tabId,
+    );
+    expect(tab?.readerExtract).toBeFalsy();
   });
 
   it("focusing address bar with readerAvailable already set does NOT re-trigger extractReadable", async () => {

@@ -135,7 +135,7 @@ export function TabRenderer({ windowId }: TabRendererProps) {
               // makes allow-same-origin safe to add back.
               sandbox="allow-scripts allow-forms allow-popups allow-downloads"
               style={{
-                display: showReader ? "none" : isActive ? "block" : "none",
+                display: isActive && !showReader ? "block" : "none",
                 position: "absolute",
                 inset: 0,
                 width: "100%",

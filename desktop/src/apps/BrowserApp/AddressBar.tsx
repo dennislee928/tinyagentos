@@ -23,6 +23,7 @@ import { extractReadable } from "@/lib/browser-extract-api";
 import { AddressSuggest } from "./AddressSuggest";
 
 const SUGGEST_DEBOUNCE_MS = 150;
+export const READER_MIN_WORD_COUNT = 200;
 
 interface AddressBarProps {
   windowId: string;
@@ -125,17 +126,27 @@ export function AddressBar({ windowId }: AddressBarProps) {
             inflightUrlRef.current = targetUrl;
             extractReadable(win.profileId, targetUrl)
               .then((result) => {
+                const currentTab = useBrowserStore
+                  .getState()
+                  .windows[windowId]
+                  ?.tabs.find((t) => t.id === activeTab.id);
+                if (!currentTab || currentTab.url !== targetUrl) return;
                 if (result) {
                   setTabReader(windowId, activeTab.id, {
-                    readerAvailable: result.word_count > 200,
+                    readerAvailable: result.word_count > READER_MIN_WORD_COUNT,
                     readerExtract: result,
                   });
                 } else {
                   setTabReader(windowId, activeTab.id, { readerAvailable: false });
                 }
               })
+              .catch(() => {
+                // Silent — match other browser-* api wrappers
+              })
               .finally(() => {
-                inflightUrlRef.current = null;
+                if (inflightUrlRef.current === targetUrl) {
+                  inflightUrlRef.current = null;
+                }
               });
           }
         }}

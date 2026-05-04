@@ -358,6 +358,69 @@ describe("browser-store: navigateTab reader reset", () => {
   });
 });
 
+describe("browser-store: goBack/goForward reader reset", () => {
+  beforeEach(async () => {
+    const mod = await import("./browser-store");
+    mod.useBrowserStore.setState({ windows: {} });
+  });
+
+  it("goBack clears all three reader fields", async () => {
+    const s = await freshStore();
+    s.createWindow("win-1", "personal");
+    const tabId = s.getWindow("win-1")!.tabs[0].id;
+
+    s.navigateTab("win-1", tabId, "https://a.test/");
+    s.navigateTab("win-1", tabId, "https://b.test/");
+    s.setTabReader("win-1", tabId, {
+      readerAvailable: true,
+      readerActive: true,
+      readerExtract: {
+        title: "Article",
+        text: "content",
+        html: "<p>content</p>",
+        word_count: 300,
+      },
+    });
+
+    s.goBack("win-1", tabId);
+
+    const tab = s.getWindow("win-1")?.tabs[0];
+    expect(tab?.url).toBe("https://a.test/");
+    expect(tab?.readerAvailable).toBeUndefined();
+    expect(tab?.readerActive).toBeUndefined();
+    expect(tab?.readerExtract).toBeNull();
+  });
+
+  it("goForward clears all three reader fields", async () => {
+    const s = await freshStore();
+    s.createWindow("win-1", "personal");
+    const tabId = s.getWindow("win-1")!.tabs[0].id;
+
+    s.navigateTab("win-1", tabId, "https://a.test/");
+    s.navigateTab("win-1", tabId, "https://b.test/");
+    s.goBack("win-1", tabId);
+    // Now set reader state at https://a.test/
+    s.setTabReader("win-1", tabId, {
+      readerAvailable: true,
+      readerActive: true,
+      readerExtract: {
+        title: "Article A",
+        text: "content a",
+        html: "<p>content a</p>",
+        word_count: 300,
+      },
+    });
+
+    s.goForward("win-1", tabId);
+
+    const tab = s.getWindow("win-1")?.tabs[0];
+    expect(tab?.url).toBe("https://b.test/");
+    expect(tab?.readerAvailable).toBeUndefined();
+    expect(tab?.readerActive).toBeUndefined();
+    expect(tab?.readerExtract).toBeNull();
+  });
+});
+
 describe("browser-store: switchProfile", () => {
   beforeEach(async () => {
     const mod = await import("./browser-store");

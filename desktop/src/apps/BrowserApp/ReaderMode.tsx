@@ -4,7 +4,7 @@
  * The raw Readability HTML is sanitised through DOMPurify before rendering
  * (XSS prevention). Font size and family are local component state.
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import DOMPurify from "dompurify";
 import { useBrowserStore } from "@/stores/browser-store";
 import type { Tab } from "./types";
@@ -29,11 +29,13 @@ export function ReaderMode({ tab, windowId }: ReaderModeProps) {
   const [fontFamily, setFontFamily] = useState<FontFamily>("serif");
 
   const extract = tab.readerExtract;
-  if (!extract) return null;
 
-  const sanitisedHtml = DOMPurify.sanitize(extract.html, {
-    USE_PROFILES: { html: true },
-  });
+  const sanitisedHtml = useMemo(
+    () => DOMPurify.sanitize(extract?.html ?? "", { USE_PROFILES: { html: true } }),
+    [extract?.html],
+  );
+
+  if (!extract) return null;
 
   let sourceDomain = "";
   try {
@@ -113,28 +115,30 @@ export function ReaderMode({ tab, windowId }: ReaderModeProps) {
           </button>
         </div>
 
-        {/* Article header */}
-        <h1
-          className={`font-bold mb-2 ${fontFamilyStyle} ${
-            fontSize === "small"
-              ? "text-xl"
-              : fontSize === "medium"
-                ? "text-2xl"
-                : "text-3xl"
-          }`}
-        >
-          {extract.title || tab.title || "Untitled"}
-        </h1>
-        {sourceDomain && (
-          <p className="text-shell-text-secondary text-xs mb-6">{sourceDomain}</p>
-        )}
+        {/* Article content */}
+        <article aria-label={extract.title || "Article"}>
+          <h1
+            className={`font-bold mb-2 ${fontFamilyStyle} ${
+              fontSize === "small"
+                ? "text-xl"
+                : fontSize === "medium"
+                  ? "text-2xl"
+                  : "text-3xl"
+            }`}
+          >
+            {extract.title || tab.title || "Untitled"}
+          </h1>
+          {sourceDomain && (
+            <p className="text-shell-text-secondary text-xs mb-6">{sourceDomain}</p>
+          )}
 
-        {/* Article body — sanitisedHtml passed through DOMPurify above */}
-        <div
-          data-testid="reader-body"
-          className={`prose max-w-none ${fontFamilyStyle} ${FONT_SIZE_CLASS[fontSize]}`}
-          dangerouslySetInnerHTML={{ __html: sanitisedHtml }}
-        />
+          {/* Article body — sanitisedHtml passed through DOMPurify above */}
+          <div
+            data-testid="reader-body"
+            className={`prose max-w-none ${fontFamilyStyle} ${FONT_SIZE_CLASS[fontSize]}`}
+            dangerouslySetInnerHTML={{ __html: sanitisedHtml }}
+          />
+        </article>
       </div>
     </div>
   );

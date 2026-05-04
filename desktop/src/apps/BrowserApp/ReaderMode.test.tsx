@@ -80,6 +80,13 @@ describe("ReaderMode — rendering", () => {
     expect(body.textContent).toContain("real content");
   });
 
+  it("wraps content in an <article> element with aria-label", () => {
+    const tab = makeTab();
+    render(<ReaderMode tab={tab} windowId={TEST_WINDOW_ID} />);
+    expect(screen.getByRole("article")).toBeInTheDocument();
+    expect(screen.getByRole("article")).toHaveAttribute("aria-label", "Test Article Title");
+  });
+
   it("returns null when readerExtract is absent", () => {
     const tab = makeTab({ readerExtract: null });
     const { container } = render(<ReaderMode tab={tab} windowId={TEST_WINDOW_ID} />);

@@ -12,7 +12,6 @@ import { create } from "zustand";
 import type {
   BrowserWindowState,
   LiveExclusion,
-  ReaderExtract,
   RecentlyClosedTab,
   Tab,
 } from "@/apps/BrowserApp/types";
@@ -231,7 +230,14 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
     set((s) => updateTab(s, windowId, tabId, (t) => {
       if (t.historyIndex <= 0) return t;
       const newIdx = t.historyIndex - 1;
-      return { ...t, historyIndex: newIdx, url: t.history[newIdx] };
+      return {
+        ...t,
+        historyIndex: newIdx,
+        url: t.history[newIdx],
+        readerAvailable: undefined,
+        readerActive: undefined,
+        readerExtract: null,
+      };
     }));
   },
 
@@ -239,7 +245,14 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
     set((s) => updateTab(s, windowId, tabId, (t) => {
       if (t.historyIndex >= t.history.length - 1) return t;
       const newIdx = t.historyIndex + 1;
-      return { ...t, historyIndex: newIdx, url: t.history[newIdx] };
+      return {
+        ...t,
+        historyIndex: newIdx,
+        url: t.history[newIdx],
+        readerAvailable: undefined,
+        readerActive: undefined,
+        readerExtract: null,
+      };
     }));
   },
 

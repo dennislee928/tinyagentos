@@ -13,6 +13,7 @@ export interface ReaderExtract {
   text: string;
   html: string;
   word_count: number;
+  note?: string;
 }
 
 export interface Tab {
