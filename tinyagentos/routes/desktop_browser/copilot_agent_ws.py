@@ -17,6 +17,7 @@ from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
 
 from tinyagentos.routes.desktop_browser import push, router
+from tinyagentos.routes.desktop_browser.copilot_ws import _maybe_send_chat_push
 
 _logger = logging.getLogger(__name__)
 
@@ -81,8 +82,14 @@ async def _maybe_send_drive_push(
     if await store.is_push_muted(user_id, agent_id, "drive-started"):
         return
     focused = hub.get_focused_tab(user_id)
-    if focused == (window_id, tab_id):
-        return
+    if focused is not None:
+        if window_id:
+            if focused == (window_id, tab_id):
+                return
+        else:
+            # window_id unknown at the agent WS — fall back to tab_id match.
+            if focused[1] == tab_id:
+                return
     payload = {
         "title": f"{agent_name or 'Agent'} started driving",
         "body": _short_url(target_url),
@@ -209,6 +216,28 @@ async def copilot_agent_ws(websocket: WebSocket, ticket: str):
                     "reason": "iframe not connected",
                 })
                 continue
+
+            # Chat push trigger — fire for chat-message ops (non-blocking).
+            if op == "chat-message":
+                msg_text = str(msg.get("text") or "")
+                vapid = getattr(websocket.app.state, "vapid_keypair", None)
+                if vapid is not None:
+                    try:
+                        asyncio.create_task(_maybe_send_chat_push(
+                            user_id=consumed.user_id,
+                            agent_id=consumed.agent_id,
+                            agent_name=consumed.agent_id,
+                            msg_text=msg_text,
+                            window_id="",
+                            tab_id=target_tab,
+                            store=store,
+                            hub=hub,
+                            vapid=vapid,
+                        ))
+                    except Exception:
+                        _logger.warning(
+                            "chat push trigger setup failed", exc_info=True
+                        )
 
             if op in _DRIVE_OPS:
                 bumped = await store.bump_drive_session(

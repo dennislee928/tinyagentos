@@ -30,6 +30,7 @@ def load_or_create_vapid_keypair(data_dir: pathlib.Path) -> tuple[str, str]:
     The public key is returned in uncompressed-point base64url-without-padding
     form (the format applicationServerKey expects in PushManager.subscribe).
     """
+    data_dir.mkdir(parents=True, exist_ok=True)
     pem_path = data_dir / _VAPID_FILENAME
 
     if pem_path.exists():

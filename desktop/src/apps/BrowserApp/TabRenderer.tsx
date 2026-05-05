@@ -174,6 +174,32 @@ export function TabRenderer({ windowId }: TabRendererProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [windowId, activeTabIdForEffect, pinnedAgentIdsForEffect.join(","), profileIdForEffect]);
 
+  // Tab-focus postMessage — keep copilot.js informed of which tab is active
+  // so it can forward tab-focus events to the server. Fires whenever the
+  // active tab changes, not on every render (effect deps are stable).
+  useEffect(() => {
+    if (!win) return;
+    const tabs = win.tabs;
+    const activeId = win.activeTabId;
+    for (const tab of tabs) {
+      const iframe = document.querySelector(
+        `iframe[data-tab-id="${tab.id}"]`,
+      ) as HTMLIFrameElement | null;
+      if (!iframe?.contentWindow) continue;
+      const focused = tab.id === activeId;
+      iframe.contentWindow.postMessage(
+        {
+          type: "taos-copilot:tab-focus",
+          window_id: windowId,
+          tab_id: tab.id,
+          focused,
+        },
+        "*",
+      );
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windowId, activeTabIdForEffect]);
+
   // Prime the Service Worker with the active tab's page base URL + profile ID
   // so it can rewrite relative SPA fetch calls through the proxy.
   // Registration moved to BrowserApp.tsx (parent shell) since copilot.js runs

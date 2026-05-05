@@ -320,3 +320,61 @@ describe("TabRenderer — live exclusion exempts discard", () => {
     expect(tab?.liveExclusion).toBe("video");
   });
 });
+
+describe("TabRenderer — tab-focus postMessage", () => {
+  it("postMessages taos-copilot:tab-focus to iframes when active tab changes", () => {
+    // Add a second tab and switch to it — the postMessage should fire for both
+    // iframes: focused:true for the new active tab, focused:false for the old.
+    const tabA = useBrowserStore.getState().getWindow(TEST_WINDOW_ID)!.tabs[0].id;
+    const tabB = useBrowserStore.getState().addTab(
+      TEST_WINDOW_ID,
+      "https://b.test/",
+    );
+    // tabB is now active. Render while capturing postMessages.
+    const messages: any[] = [];
+    const origPostMessage = window.postMessage.bind(window);
+
+    const { container } = render(<TabRenderer windowId={TEST_WINDOW_ID} />);
+
+    // Attach a spy to each iframe's contentWindow.postMessage.
+    const iframes = Array.from(
+      container.querySelectorAll("iframe"),
+    ) as HTMLIFrameElement[];
+    const spies = iframes.map((iframe) => {
+      const spy = vi.fn();
+      // jsdom iframes don't have a real contentWindow; polyfill for this test.
+      if (!iframe.contentWindow) {
+        Object.defineProperty(iframe, "contentWindow", {
+          value: { postMessage: spy },
+          configurable: true,
+        });
+      } else {
+        vi.spyOn(iframe.contentWindow, "postMessage").mockImplementation(spy);
+      }
+      return spy;
+    });
+
+    // Now switch to tabA — triggers the activeTabId change.
+    act(() => {
+      useBrowserStore.getState().setActiveTab(TEST_WINDOW_ID, tabA);
+    });
+
+    // At least one iframe should have received a taos-copilot:tab-focus message.
+    const allCalls = spies.flatMap((spy) => spy.mock.calls);
+    const focusCalls = allCalls.filter(
+      (args) => args[0]?.type === "taos-copilot:tab-focus",
+    );
+    expect(focusCalls.length).toBeGreaterThan(0);
+
+    // The active tab's iframe should have received focused:true.
+    const activeFocusCalls = focusCalls.filter(
+      (args) => args[0]?.tab_id === tabA && args[0]?.focused === true,
+    );
+    expect(activeFocusCalls.length).toBeGreaterThan(0);
+
+    // window_id must be present on every tab-focus message.
+    for (const args of focusCalls) {
+      expect(args[0].window_id).toBe(TEST_WINDOW_ID);
+    }
+  });
+});

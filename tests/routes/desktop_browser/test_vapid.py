@@ -49,3 +49,17 @@ class TestLoadOrCreateVapidKeypair:
 
         pem_path = tmp_path / "vapid.pem"
         assert os.stat(pem_path).st_mode & 0o777 == 0o600
+
+    def test_creates_missing_data_dir(self, tmp_path):
+        """data_dir that does not yet exist is created automatically."""
+        from tinyagentos.routes.desktop_browser.vapid import load_or_create_vapid_keypair
+
+        subdir = tmp_path / "subdir"
+        assert not subdir.exists()
+
+        pub, priv = load_or_create_vapid_keypair(subdir)
+
+        assert subdir.exists()
+        assert (subdir / "vapid.pem").exists()
+        assert isinstance(pub, str)
+        assert isinstance(priv, str)

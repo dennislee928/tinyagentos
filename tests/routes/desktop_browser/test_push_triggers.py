@@ -288,6 +288,56 @@ class TestDrivePushTrigger:
         mock_send.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_suppressed_by_tab_id_when_window_id_empty(self, store):
+        """Drive push suppressed when window_id is empty but tab_id matches focused tab."""
+        from tinyagentos.routes.desktop_browser.copilot_agent_ws import _maybe_send_drive_push
+
+        hub = _make_hub()
+        # Focused tab is known with full (window_id, tab_id)
+        hub.set_focused_tab("user1", "real-window", "tab-X")
+
+        with _patch_push_send() as mock_send:
+            # window_id="" but tab_id matches focused tab's tab_id — should suppress
+            await _maybe_send_drive_push(
+                user_id="user1",
+                agent_id="agent-beta",
+                agent_name="Beta",
+                target_url="https://example.com/",
+                window_id="",
+                tab_id="tab-X",
+                store=store,
+                hub=hub,
+                vapid=FAKE_VAPID,
+            )
+
+        mock_send.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_fires_when_window_id_empty_and_tab_id_no_match(self, store):
+        """Drive push fires when window_id is empty and tab_id does NOT match focused tab."""
+        from tinyagentos.routes.desktop_browser.copilot_agent_ws import _maybe_send_drive_push
+
+        hub = _make_hub()
+        # Focused tab has tab_id "tab-X"; agent is on a different tab "tab-Y"
+        hub.set_focused_tab("user1", "real-window", "tab-X")
+
+        with _patch_push_send() as mock_send:
+            mock_send.return_value = {"sent": 1, "failed": 0, "removed": 0}
+            await _maybe_send_drive_push(
+                user_id="user1",
+                agent_id="agent-beta",
+                agent_name="Beta",
+                target_url="https://example.com/",
+                window_id="",
+                tab_id="tab-Y",
+                store=store,
+                hub=hub,
+                vapid=FAKE_VAPID,
+            )
+
+        mock_send.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_suppressed_when_drive_started_muted(self, store):
         """Drive push suppressed when the user has muted drive-started for this agent."""
         from tinyagentos.routes.desktop_browser.copilot_agent_ws import _maybe_send_drive_push
