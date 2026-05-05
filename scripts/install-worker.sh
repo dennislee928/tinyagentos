@@ -230,7 +230,16 @@ phase2_inside_lxc() {
 
     # 1. Nested incus + bees
     apt update -y
-    apt install -y incus bees curl
+    apt install -y incus curl
+    # bees is not packaged in Ubuntu 24.04; install if available, otherwise
+    # the bees service setup below is skipped (TAOS_NO_DEDUP behaviour).
+    local bees_installed=0
+    if apt-get install -y bees 2>/dev/null; then
+        bees_installed=1
+    else
+        warn "bees not available in apt — skipping btrfs deduplication daemon"
+        warn "  to enable later: apt install bees && systemctl enable --now bees.service"
+    fi
 
     if incus list >/dev/null 2>&1; then
         log "nested incus already initialised"
@@ -238,8 +247,8 @@ phase2_inside_lxc() {
         incus admin init --minimal < /dev/null
     fi
 
-    # 2. bees systemd unit (default-on; opt-out via TAOS_NO_DEDUP)
-    if [[ -z "${TAOS_NO_DEDUP:-}" ]]; then
+    # 2. bees systemd unit (default-on; opt-out via TAOS_NO_DEDUP or unavailable)
+    if [[ -z "${TAOS_NO_DEDUP:-}" && "$bees_installed" == "1" ]]; then
         # bees needs UUID of the storage pool's btrfs filesystem.
         # The nested incus default pool is at /var/lib/incus/storage-pools/default.
         local pool_uuid
@@ -267,7 +276,7 @@ WantedBy=multi-user.target
 BEESEOF
         systemctl daemon-reload
         systemctl enable --now bees.service || warn "bees enable failed (ok if storage not ready yet)"
-    else
+    elif [[ -n "${TAOS_NO_DEDUP:-}" ]]; then
         log "TAOS_NO_DEDUP set; skipping bees"
     fi
 
