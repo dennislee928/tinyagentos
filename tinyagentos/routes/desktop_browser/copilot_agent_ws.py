@@ -9,6 +9,7 @@ regardless of how many tabs it's pinned to. The ticket's tab_id determines the
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlparse
 
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
@@ -18,6 +19,38 @@ from tinyagentos.routes.desktop_browser import router
 _logger = logging.getLogger(__name__)
 
 _DRIVE_OPS = {"scrollTo", "click", "type", "navigate", "focus"}
+
+# Privileged ops and the permission required to execute them.
+PRIVILEGED_OPS = {
+    "drive": {"scrollTo", "click", "type", "focus"},
+    "navigate": {"navigate"},
+    "see_cookies": set(),  # see_cookies is for raw cookie reads — not used by current ops
+}
+
+# Reverse lookup: op name → required permission
+OP_TO_PERMISSION: dict[str, str] = {}
+for _perm, _ops in PRIVILEGED_OPS.items():
+    for _op_name in _ops:
+        OP_TO_PERMISSION[_op_name] = _perm
+
+
+def _required_permission(op: str) -> str | None:
+    return OP_TO_PERMISSION.get(op)
+
+
+def _extract_host(msg: dict) -> str:
+    """Extract the host the agent claims to operate on. Falls back to
+    parsing the url field if no explicit host."""
+    host = msg.get("host")
+    if isinstance(host, str) and host:
+        return host
+    url = msg.get("url")
+    if isinstance(url, str) and url:
+        try:
+            return urlparse(url).hostname or ""
+        except Exception:
+            return ""
+    return ""
 
 
 @router.websocket("/api/desktop/browser/copilot-agent")
@@ -54,6 +87,37 @@ async def copilot_agent_ws(websocket: WebSocket, ticket: str):
             # only operates on the ticket's tab; cross-tab ops are out of scope.
             target_profile = msg.get("profile_id", consumed.profile_id)
             target_tab = msg.get("tab_id", consumed.tab_id)
+
+            # Capability check for privileged ops
+            required = _required_permission(op)
+            if required is not None:
+                host = _extract_host(msg)
+                granted = await store.check_capability(
+                    user_id=consumed.user_id,
+                    profile_id=target_profile,
+                    agent_id=consumed.agent_id,
+                    host=host,
+                    permission=required,
+                )
+                if not granted:
+                    # Notify iframe so the modal can pop
+                    await hub.notify_capability_needed(
+                        user_id=consumed.user_id,
+                        profile_id=target_profile,
+                        tab_id=target_tab,
+                        agent_id=consumed.agent_id,
+                        permission=required,
+                        host=host,
+                        full_url=msg.get("url", ""),
+                    )
+                    # Tell agent the op was denied
+                    await websocket.send_json({
+                        "event": "denied",
+                        "op_id": msg.get("op_id"),
+                        "reason": "capability-needed",
+                        "permission": required,
+                    })
+                    continue
 
             ok = await hub.route_op_to_iframe(
                 user_id=consumed.user_id,

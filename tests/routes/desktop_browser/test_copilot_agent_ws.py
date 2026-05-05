@@ -202,12 +202,23 @@ class TestRoundTripOpAck:
         record = ws_app.state.auth.find_user("admin")
         user_id = record["id"]
 
+        # Grant drive capability so click op is not denied
+        asyncio.run(
+            ws_app.state.browser_store.add_capability(
+                user_id=user_id,
+                profile_id="p1",
+                agent_id="agent-rt",
+                host_pattern="example.com",
+                permissions="drive",
+            )
+        )
+
         # Register a fake iframe in the hub
         mock_iframe_ws = AsyncMock()
         iframe_key = (user_id, "p1", "t1", "agent-rt")
         ws_app.state.copilot_hub._iframe_conns[iframe_key] = mock_iframe_ws
 
-        op_msg = {"op": "click", "selector": "#submit", "op_id": "op-1"}
+        op_msg = {"op": "click", "selector": "#submit", "op_id": "op-1", "host": "example.com"}
 
         with ws_client.websocket_connect(
             f"/api/desktop/browser/copilot-agent?ticket={ticket}"
@@ -234,6 +245,17 @@ class TestDriveOpBumpsSession:
         record = ws_app.state.auth.find_user("admin")
         user_id = record["id"]
 
+        # Grant drive capability so click op is not denied
+        asyncio.run(
+            ws_app.state.browser_store.add_capability(
+                user_id=user_id,
+                profile_id="p1",
+                agent_id="agent-drive",
+                host_pattern="example.com",
+                permissions="drive",
+            )
+        )
+
         # Register a mock iframe so the op routes successfully
         mock_iframe_ws = AsyncMock()
         iframe_key = (user_id, "p1", "t1", "agent-drive")
@@ -242,7 +264,7 @@ class TestDriveOpBumpsSession:
         with ws_client.websocket_connect(
             f"/api/desktop/browser/copilot-agent?ticket={ticket}"
         ) as ws:
-            ws.send_json({"op": "click", "selector": "#btn", "op_id": "op-2"})
+            ws.send_json({"op": "click", "selector": "#btn", "op_id": "op-2", "host": "example.com"})
             import time
             time.sleep(0.05)
 
@@ -303,13 +325,27 @@ class TestNonDriveOpNoSession:
 
 class TestOpMissingIframe:
     def test_error_event_sent_to_agent_when_iframe_absent(self, ws_client, ws_app):
-        """Send an op when no iframe is connected → server replies event: error."""
+        """Send a privileged op with capability granted but no iframe connected →
+        server replies event: error (iframe not connected)."""
         ticket = _pin_and_mint(ws_client, ws_app, "p1", "t1", "agent-err")
+        record = ws_app.state.auth.find_user("admin")
+        user_id = record["id"]
+
+        # Grant drive so the capability check passes; then no iframe → error
+        asyncio.run(
+            ws_app.state.browser_store.add_capability(
+                user_id=user_id,
+                profile_id="p1",
+                agent_id="agent-err",
+                host_pattern="example.com",
+                permissions="drive",
+            )
+        )
 
         with ws_client.websocket_connect(
             f"/api/desktop/browser/copilot-agent?ticket={ticket}"
         ) as ws:
-            ws.send_json({"op": "click", "selector": "#x", "op_id": "op-err"})
+            ws.send_json({"op": "click", "selector": "#x", "op_id": "op-err", "host": "example.com"})
             reply = ws.receive_json()
 
         assert reply["event"] == "error"
@@ -399,3 +435,220 @@ class TestCopilotHubAgentMethods:
             op={"op": "click"},
         )
         assert result is False
+
+    # ------------------------------------------------------------------
+    # notify_capability_needed unit tests
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_notify_capability_needed_sends_event_to_iframe(self):
+        """notify_capability_needed pushes capability-needed payload to the iframe WS."""
+        hub = self._make_hub()
+        ws = AsyncMock()
+        hub._iframe_conns[("u1", "p1", "t1", "a1")] = ws
+        result = await hub.notify_capability_needed(
+            user_id="u1",
+            profile_id="p1",
+            tab_id="t1",
+            agent_id="a1",
+            permission="drive",
+            host="example.com",
+            full_url="https://example.com/page",
+        )
+        assert result is True
+        ws.send_json.assert_awaited_once_with({
+            "event": "capability-needed",
+            "profile_id": "p1",
+            "permission": "drive",
+            "host": "example.com",
+            "full_url": "https://example.com/page",
+        })
+
+    @pytest.mark.asyncio
+    async def test_notify_capability_needed_returns_false_when_no_iframe(self):
+        hub = self._make_hub()
+        result = await hub.notify_capability_needed(
+            user_id="u1",
+            profile_id="p1",
+            tab_id="t1",
+            agent_id="a1",
+            permission="drive",
+            host="example.com",
+        )
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_notify_capability_needed_swallows_send_failure(self):
+        hub = self._make_hub()
+        ws = AsyncMock()
+        ws.send_json.side_effect = RuntimeError("closed")
+        hub._iframe_conns[("u1", "p1", "t1", "a1")] = ws
+        result = await hub.notify_capability_needed(
+            user_id="u1",
+            profile_id="p1",
+            tab_id="t1",
+            agent_id="a1",
+            permission="drive",
+            host="example.com",
+        )
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Case 11: Capability enforcement — drive ops
+# ---------------------------------------------------------------------------
+
+def _grant_capability(app, user_id, profile_id, agent_id, host, permissions):
+    """Synchronously add a capability grant to the browser_store."""
+    import asyncio
+    asyncio.run(
+        app.state.browser_store.add_capability(
+            user_id=user_id,
+            profile_id=profile_id,
+            agent_id=agent_id,
+            host_pattern=host,
+            permissions=permissions,
+        )
+    )
+
+
+class TestCapabilityEnforcement:
+
+    def test_drive_op_without_capability_is_denied(self, ws_client, ws_app):
+        """Agent sends op:click without a drive grant → denied + iframe notified."""
+        ticket = _pin_and_mint(ws_client, ws_app, "p1", "t1", "agent-cap-deny")
+        record = ws_app.state.auth.find_user("admin")
+        user_id = record["id"]
+
+        # Register fake iframe
+        mock_iframe_ws = AsyncMock()
+        iframe_key = (user_id, "p1", "t1", "agent-cap-deny")
+        ws_app.state.copilot_hub._iframe_conns[iframe_key] = mock_iframe_ws
+
+        with ws_client.websocket_connect(
+            f"/api/desktop/browser/copilot-agent?ticket={ticket}"
+        ) as ws:
+            ws.send_json({
+                "op": "click",
+                "selector": "#btn",
+                "op_id": "op-deny-1",
+                "host": "example.com",
+            })
+            reply = ws.receive_json()
+
+        assert reply["event"] == "denied"
+        assert reply["op_id"] == "op-deny-1"
+        assert reply["reason"] == "capability-needed"
+        assert reply["permission"] == "drive"
+
+        # iframe should have received capability-needed
+        mock_iframe_ws.send_json.assert_awaited_once()
+        sent = mock_iframe_ws.send_json.call_args[0][0]
+        assert sent["event"] == "capability-needed"
+        assert sent["permission"] == "drive"
+        assert sent["host"] == "example.com"
+
+        ws_app.state.copilot_hub._iframe_conns.pop(iframe_key, None)
+
+    def test_drive_op_with_capability_proceeds(self, ws_client, ws_app):
+        """Agent sends op:click WITH a drive grant → routes through (no denial)."""
+        ticket = _pin_and_mint(ws_client, ws_app, "p1", "t1", "agent-cap-ok")
+        record = ws_app.state.auth.find_user("admin")
+        user_id = record["id"]
+
+        # Grant drive capability
+        _grant_capability(ws_app, user_id, "p1", "agent-cap-ok", "example.com", "drive")
+
+        mock_iframe_ws = AsyncMock()
+        iframe_key = (user_id, "p1", "t1", "agent-cap-ok")
+        ws_app.state.copilot_hub._iframe_conns[iframe_key] = mock_iframe_ws
+
+        op_msg = {"op": "click", "selector": "#submit", "op_id": "op-ok-1", "host": "example.com"}
+
+        with ws_client.websocket_connect(
+            f"/api/desktop/browser/copilot-agent?ticket={ticket}"
+        ) as ws:
+            ws.send_json(op_msg)
+            import time
+            time.sleep(0.05)
+
+        # The iframe should have received the op (not a denial)
+        mock_iframe_ws.send_json.assert_awaited_once_with(op_msg)
+
+        ws_app.state.copilot_hub._iframe_conns.pop(iframe_key, None)
+
+    def test_navigate_op_requires_navigate_capability(self, ws_client, ws_app):
+        """op:navigate is gated by 'navigate' permission — 'drive' grant is NOT enough."""
+        ticket = _pin_and_mint(ws_client, ws_app, "p1", "t1", "agent-cap-nav")
+        record = ws_app.state.auth.find_user("admin")
+        user_id = record["id"]
+
+        # Grant only drive, NOT navigate
+        _grant_capability(ws_app, user_id, "p1", "agent-cap-nav", "example.com", "drive")
+
+        mock_iframe_ws = AsyncMock()
+        iframe_key = (user_id, "p1", "t1", "agent-cap-nav")
+        ws_app.state.copilot_hub._iframe_conns[iframe_key] = mock_iframe_ws
+
+        with ws_client.websocket_connect(
+            f"/api/desktop/browser/copilot-agent?ticket={ticket}"
+        ) as ws:
+            ws.send_json({
+                "op": "navigate",
+                "url": "https://example.com/other",
+                "op_id": "op-nav-1",
+                "host": "example.com",
+            })
+            reply = ws.receive_json()
+
+        assert reply["event"] == "denied"
+        assert reply["permission"] == "navigate"
+
+        ws_app.state.copilot_hub._iframe_conns.pop(iframe_key, None)
+
+    def test_non_privileged_op_passes_through(self, ws_client, ws_app):
+        """op:extract (read-only) goes through without any capability check."""
+        ticket = _pin_and_mint(ws_client, ws_app, "p1", "t1", "agent-cap-extract")
+        record = ws_app.state.auth.find_user("admin")
+        user_id = record["id"]
+
+        # No capability granted — extract should still route
+        mock_iframe_ws = AsyncMock()
+        iframe_key = (user_id, "p1", "t1", "agent-cap-extract")
+        ws_app.state.copilot_hub._iframe_conns[iframe_key] = mock_iframe_ws
+
+        op_msg = {"op": "extract", "selector": "article", "op_id": "op-ext-1"}
+
+        with ws_client.websocket_connect(
+            f"/api/desktop/browser/copilot-agent?ticket={ticket}"
+        ) as ws:
+            ws.send_json(op_msg)
+            import time
+            time.sleep(0.05)
+
+        # Iframe should have received the extract op
+        mock_iframe_ws.send_json.assert_awaited_once_with(op_msg)
+
+        ws_app.state.copilot_hub._iframe_conns.pop(iframe_key, None)
+
+    def test_capability_needed_with_no_iframe_still_denies_agent(
+        self, ws_client, ws_app
+    ):
+        """When iframe is not connected, agent still gets the denial."""
+        ticket = _pin_and_mint(ws_client, ws_app, "p1", "t1", "agent-cap-noframe")
+
+        # No iframe registered, no capability granted
+        with ws_client.websocket_connect(
+            f"/api/desktop/browser/copilot-agent?ticket={ticket}"
+        ) as ws:
+            ws.send_json({
+                "op": "click",
+                "selector": "#x",
+                "op_id": "op-noframe-1",
+                "host": "example.com",
+            })
+            reply = ws.receive_json()
+
+        assert reply["event"] == "denied"
+        assert reply["reason"] == "capability-needed"
+        assert reply["permission"] == "drive"

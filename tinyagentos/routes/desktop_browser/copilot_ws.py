@@ -219,6 +219,43 @@ class CopilotHub:
             _logger.debug("copilot route_ack_to_agent failed: %s", e)
             return False
 
+    async def notify_capability_needed(
+        self,
+        *,
+        user_id: str,
+        profile_id: str,
+        tab_id: str,
+        agent_id: str,
+        permission: str,
+        host: str,
+        full_url: str = "",
+    ) -> bool:
+        """Push a capability-needed event to the iframe-side WS for the
+        (user, profile, tab, agent) tuple. The iframe's copilot.js forwards
+        it to the parent via postMessage; the parent's agent-ws-bridge
+        catches it and dispatches taos-browser:capability-prompt for the
+        CapabilityPromptModal.
+
+        Returns True iff the iframe was reachable.
+        """
+        key = (user_id, profile_id, tab_id, agent_id)
+        ws = self._iframe_conns.get(key)
+        if ws is None:
+            return False
+        payload = {
+            "event": "capability-needed",
+            "profile_id": profile_id,
+            "permission": permission,
+            "host": host,
+            "full_url": full_url,
+        }
+        try:
+            await ws.send_json(payload)
+            return True
+        except Exception as e:
+            _logger.debug("notify_capability_needed failed: %s", e)
+            return False
+
     async def push_event_to_pinned(
         self, *, user_id: str, profile_id: str, tab_id: str, event: dict,
     ) -> None:
