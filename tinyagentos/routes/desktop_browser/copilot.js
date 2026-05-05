@@ -321,6 +321,42 @@
 
   // The parent shell mints a ticket per (tab, agent) and postMessages it into
   // the iframe.  We open one WS per agentId.
+  // ─── Tab focus context ──────────────────────────────────────────────────────
+  // window_id and tab_id are not available inside the sandboxed iframe directly.
+  // The parent shell (TabRenderer.tsx or BrowserApp.tsx) sends them via
+  // postMessage of type 'taos-copilot:tab-focus' whenever the active tab changes.
+  // We cache them here and forward via WS when the iframe receives focus.
+  var _focusWindowId = '';
+  var _focusTabId = '';
+
+  function _sendTabFocusToAll() {
+    if (!_focusWindowId || !_focusTabId) return;
+    var msg = JSON.stringify({
+      event: 'tab-focus',
+      window_id: _focusWindowId,
+      tab_id: _focusTabId,
+    });
+    var ids = Object.keys(_connections);
+    for (var i = 0; i < ids.length; i++) {
+      var ws = _connections[ids[i]];
+      if (ws && ws.readyState === 1) {
+        ws.send(msg);
+      }
+    }
+  }
+
+  // When the iframe window itself gains focus (user clicks into it)
+  window.addEventListener('focus', function () {
+    _sendTabFocusToAll();
+  });
+
+  // When the iframe becomes visible (tab switch back to this tab)
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') {
+      _sendTabFocusToAll();
+    }
+  });
+
   window.addEventListener('message', function (e) {
     // SECURITY: sandbox attribute is "allow-scripts allow-forms allow-popups
     // allow-downloads" (no allow-same-origin), so accessing
@@ -334,6 +370,15 @@
       openConnection(data.ticket, data.agentId);
     } else if (data.type === 'taos-copilot:close' && data.agentId) {
       closeConnection(data.agentId);
+    } else if (data.type === 'taos-copilot:tab-focus' && data.window_id && data.tab_id) {
+      // Parent shell tells us which tab is currently focused (and whether it's
+      // this iframe's tab). We always update and forward — the server checks
+      // whether the stored (window_id, tab_id) matches the agent's pinned tab.
+      _focusWindowId = data.window_id;
+      _focusTabId = data.tab_id;
+      if (data.focused) {
+        _sendTabFocusToAll();
+      }
     }
   });
 

@@ -8,13 +8,15 @@ regardless of how many tabs it's pinned to. The ticket's tab_id determines the
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
 
-from tinyagentos.routes.desktop_browser import router
+from tinyagentos.routes.desktop_browser import push, router
 
 _logger = logging.getLogger(__name__)
 
@@ -36,6 +38,58 @@ for _perm, _ops in PRIVILEGED_OPS.items():
 
 def _required_permission(op: str) -> str | None:
     return OP_TO_PERMISSION.get(op)
+
+
+def _short_url(url: str) -> str:
+    """Return host + truncated path for display in push notifications.
+
+    e.g. 'https://github.com/foo/bar/baz/qux' → 'github.com/foo/bar/...'
+    """
+    if not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        path = parsed.path or ""
+        # Truncate path to first 2 segments for brevity
+        parts = [p for p in path.split("/") if p]
+        if len(parts) > 2:
+            short_path = "/" + "/".join(parts[:2]) + "/..."
+        else:
+            short_path = path
+        return host + short_path
+    except Exception:
+        return url[:60]
+
+
+async def _maybe_send_drive_push(
+    user_id: str,
+    agent_id: str,
+    agent_name: str,
+    target_url: str,
+    window_id: str,
+    tab_id: str,
+    store: Any,
+    hub: Any,
+    vapid: tuple[str, str],
+) -> None:
+    """Send a push notification when the agent starts driving a tab, unless
+    the user is already focused on that tab or has muted drive-started alerts."""
+    from tinyagentos.routes.desktop_browser.store import BrowserStore
+    if not isinstance(store, BrowserStore):
+        return
+    if await store.is_push_muted(user_id, agent_id, "drive-started"):
+        return
+    focused = hub.get_focused_tab(user_id)
+    if focused == (window_id, tab_id):
+        return
+    payload = {
+        "title": f"{agent_name or 'Agent'} started driving",
+        "body": _short_url(target_url),
+        "tag": f"drive:{agent_id}:{tab_id}",
+        "data": {"window_id": window_id, "tab_id": tab_id, "agent_id": agent_id},
+    }
+    await push.send(user_id, payload, store=store, vapid=vapid)
 
 
 def _trusted_host(server_url: str | None) -> str:
@@ -164,12 +218,38 @@ async def copilot_agent_ws(websocket: WebSocket, ticket: str):
                     agent_id=consumed.agent_id,
                 )
                 if not bumped:
+                    # First drive op of this session — start the session and
+                    # fire a push notification (non-blocking).
                     await store.start_drive_session(
                         user_id=consumed.user_id,
                         profile_id=target_profile,
                         tab_id=target_tab,
                         agent_id=consumed.agent_id,
                     )
+                    target_url = hub.get_tab_url(
+                        user_id=consumed.user_id,
+                        profile_id=target_profile,
+                        tab_id=target_tab,
+                    ) or ""
+                    agent_name = consumed.agent_id  # best available identifier
+                    vapid = getattr(websocket.app.state, "vapid_keypair", None)
+                    if vapid is not None:
+                        try:
+                            asyncio.create_task(_maybe_send_drive_push(
+                                user_id=consumed.user_id,
+                                agent_id=consumed.agent_id,
+                                agent_name=agent_name,
+                                target_url=target_url,
+                                window_id="",
+                                tab_id=target_tab,
+                                store=store,
+                                hub=hub,
+                                vapid=vapid,
+                            ))
+                        except Exception:
+                            _logger.warning(
+                                "drive push trigger setup failed", exc_info=True
+                            )
     except WebSocketDisconnect:
         pass
     finally:

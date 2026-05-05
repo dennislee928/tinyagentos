@@ -14,9 +14,11 @@ to the client.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
+import uuid
 from typing import Any
 from urllib.parse import quote, unquote, urljoin, urlparse, urlsplit
 
@@ -25,7 +27,7 @@ from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from tinyagentos.auth import get_current_user
-from tinyagentos.routes.desktop_browser import router
+from tinyagentos.routes.desktop_browser import push, router
 from tinyagentos.routes.desktop_browser.cookie_jar import (
     load_jar_for_request,
     persist_response_cookies,
@@ -113,6 +115,8 @@ async def download_endpoint(
     profile_id: str,
     url: str,
     filename: str | None = None,
+    window_id: str | None = None,
+    tab_id: str | None = None,
     current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008
 ):
     """Stream an upstream file through the proxy as a browser download.
@@ -173,10 +177,16 @@ async def download_endpoint(
         filename or upstream_filename or _filename_from_url(final_url)
     )
 
+    download_id = uuid.uuid4().hex[:8]
+    _store = getattr(request.app.state, "browser_store", None)
+    _vapid = getattr(request.app.state, "vapid_keypair", None)
+
     async def streamer():
+        _stream_ok = False
         try:
             async for chunk in response.aiter_bytes():
                 yield chunk
+            _stream_ok = True
             try:
                 await persist_response_cookies(
                     request.app.state.browser_cookie_store,
@@ -191,6 +201,23 @@ async def download_endpoint(
         finally:
             await response.aclose()
             await http.aclose()
+            if _stream_ok and _store is not None and _vapid is not None:
+                try:
+                    if not await _store.is_push_muted(user_id, "system", "download-finished"):
+                        payload = {
+                            "title": "Download finished",
+                            "body": final_name,
+                            "tag": f"download:{download_id}",
+                            "data": {
+                                "window_id": window_id or "",
+                                "tab_id": tab_id or "",
+                            },
+                        }
+                        asyncio.create_task(
+                            push.send(user_id, payload, store=_store, vapid=_vapid)
+                        )
+                except Exception:
+                    _logger.warning("download push trigger failed", exc_info=True)
 
     # RFC 5987 encoded filename for non-ASCII safety
     safe_quoted = quote(final_name, safe="")
