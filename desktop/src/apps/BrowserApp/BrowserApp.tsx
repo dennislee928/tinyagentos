@@ -26,6 +26,7 @@ import { FindInPage } from "./FindInPage";
 import { TabOverview } from "./TabOverview";
 import { WindowChooser } from "./WindowChooser";
 import { CapabilityPromptModal } from "./CapabilityPromptModal";
+import { BookmarksBar } from "./BookmarksBar";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { Layers, ListChecks } from "lucide-react";
 import { bootstrapPushSubscription } from "../../lib/browser-push-bootstrap";
@@ -145,6 +146,7 @@ export function BrowserApp({ windowId }: BrowserAppProps) {
       <div className="flex items-center gap-1 px-2 py-1 bg-shell-surface border-b border-shell-border-subtle">
         <AddressBar windowId={windowId} />
       </div>
+      <BookmarksBar windowId={windowId} profileId={win.profileId} />
       <TabStrip windowId={windowId} />
       <TabRenderer windowId={windowId} />
       {findOpen && (
