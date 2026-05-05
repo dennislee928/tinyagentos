@@ -155,6 +155,10 @@ class CopilotHub:
 
     def __init__(self) -> None:
         self._iframe_conns: dict[tuple[str, str, str, str], WebSocket] = {}
+        # Agent connections: one per (user_id, agent_id) tuple. An agent's runtime
+        # talks to the server through this single WS regardless of how many tabs
+        # it's pinned to.
+        self._agent_conns: dict[tuple[str, str], WebSocket] = {}
 
     def add_iframe(
         self, *, user_id: str, profile_id: str, tab_id: str, agent_id: str,
@@ -173,6 +177,47 @@ class CopilotHub:
     ) -> None:
         """Remove a registered iframe WS. No-op if not present."""
         self._iframe_conns.pop((user_id, profile_id, tab_id, agent_id), None)
+
+    def add_agent(self, *, user_id: str, agent_id: str, ws: WebSocket) -> None:
+        """Register agent connection. Replaces prior connection for the same key
+        (closes the old one async-style, mirrors add_iframe pattern)."""
+        key = (user_id, agent_id)
+        old = self._agent_conns.pop(key, None)
+        if old is not None:
+            asyncio.create_task(_close_safely(old))
+        self._agent_conns[key] = ws
+
+    def remove_agent(self, *, user_id: str, agent_id: str) -> None:
+        self._agent_conns.pop((user_id, agent_id), None)
+
+    async def route_op_to_iframe(
+        self, *, user_id: str, profile_id: str, tab_id: str, agent_id: str, op: dict,
+    ) -> bool:
+        """Forward an op to the iframe-side WS. Returns True iff the iframe was reachable."""
+        key = (user_id, profile_id, tab_id, agent_id)
+        ws = self._iframe_conns.get(key)
+        if ws is None:
+            return False
+        try:
+            await ws.send_json(op)
+            return True
+        except Exception as e:
+            _logger.debug("copilot route_op_to_iframe failed: %s", e)
+            return False
+
+    async def route_ack_to_agent(
+        self, *, user_id: str, agent_id: str, ack: dict,
+    ) -> bool:
+        """Forward an ack from iframe → agent. Returns True iff the agent was reachable."""
+        ws = self._agent_conns.get((user_id, agent_id))
+        if ws is None:
+            return False
+        try:
+            await ws.send_json(ack)
+            return True
+        except Exception as e:
+            _logger.debug("copilot route_ack_to_agent failed: %s", e)
+            return False
 
     async def push_event_to_pinned(
         self, *, user_id: str, profile_id: str, tab_id: str, event: dict,
@@ -240,11 +285,16 @@ async def copilot_ws(websocket: WebSocket, ticket: str):
             message = await websocket.receive_json()
             event_kind = message.get("event")
             if event_kind not in _ALLOWED_EVENT_KINDS:
-                # Don't crash on unknown events; just drop. PR 7 will route
-                # 'ack' events back to the agent connection.
+                # Don't crash on unknown events; just drop.
                 continue
-            # PR 6: iframe → server events accepted but not routed.
-            # PR 7 wires 'ack' to the agent-side connection.
+            # Iframe → server events. 'ack' messages get routed to the agent runtime.
+            # Other events (page-changed etc.) are broadcast by proxy.py via push_event_to_pinned.
+            if event_kind == "ack":
+                await hub.route_ack_to_agent(
+                    user_id=consumed.user_id,
+                    agent_id=consumed.agent_id,
+                    ack=message,
+                )
     except WebSocketDisconnect:
         pass
     finally:
