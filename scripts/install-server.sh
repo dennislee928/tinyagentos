@@ -386,7 +386,7 @@ if [[ -z "${TAOS_SKIP_QMD:-}" ]]; then
             # (errno -2).  --unsafe-perm keeps npm running as root throughout,
             # which is the historical behaviour and the only thing that works
             # for native-binding packages on a system-global install.
-            sudo HOME=/root npm install -g --unsafe-perm "github:jaylfc/qmd#feat/remote-llm-provider" \
+            sudo HOME=/root npm install -g --unsafe-perm "@jaylfc/qmd" \
                 || die "npm install of qmd failed — cannot continue (qmd.service would never start)"
             # Confirm the binary is reachable before we proceed.
             if ! command -v qmd >/dev/null 2>&1; then
