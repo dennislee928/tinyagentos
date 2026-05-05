@@ -191,6 +191,48 @@ phase1_host_prep() {
     launch_worker_lxc
 }
 
+# --- phase 1: nftables port-forward + re-exec -----------------------------
+
+setup_port_forward() {
+    local worker_ip
+    worker_ip="$(sudo incus list taos-worker --format=csv -c 4 2>/dev/null | head -1 | awk '{print $1}')"
+    if [[ -z "$worker_ip" ]]; then
+        die "could not determine taos-worker IP for port-forward"
+    fi
+    log "forwarding host :8443 → ${worker_ip}:8443 via nftables"
+    sudo nft add table ip taos 2>/dev/null || true
+    sudo nft 'add chain ip taos prerouting { type nat hook prerouting priority -100 ; }' 2>/dev/null || true
+    sudo nft 'flush chain ip taos prerouting' 2>/dev/null || true
+    sudo nft "add rule ip taos prerouting tcp dport 8443 dnat to ${worker_ip}:8443"
+    sudo bash -c 'nft list ruleset > /etc/nftables.conf'
+    sudo systemctl enable --now nftables 2>/dev/null || true
+}
+
+reexec_into_worker_lxc() {
+    log "re-execing install-worker.sh inside taos-worker for phase 2"
+    sudo incus exec taos-worker -- bash -c "
+        set -e
+        export TAOS_INSIDE_WORKER=1
+        export TAOS_CONTROLLER_URL='${CONTROLLER_URL}'
+        export TAOS_WORKER_NAME='${WORKER_NAME}'
+        curl -sL '${REPO}/raw/${BRANCH}/scripts/install-worker.sh' | bash -s -- '${CONTROLLER_URL}'
+    "
+}
+
+# --- phase 1 entry-point --------------------------------------------------
+# On a bare host (PHASE=host, Linux only) run host prep and exit.
+# Phase 2 (inside the worker LXC) falls through to the rest of the script.
+
+if [[ "$os_name" == "Linux" && "$PHASE" == "host" ]]; then
+    phase1_host_prep
+    setup_port_forward
+    # NOTE: reexec_into_worker_lxc is called after T8 lands.
+    # For now, log that phase 1 is complete.
+    log "Phase 1 complete (worker LXC launched + port-forward set up)"
+    log "Phase 2 will run inside the worker LXC once T8 lands."
+    exit 0
+fi
+
 # --- system dependencies --------------------------------------------------
 
 ensure_linux_deps() {
