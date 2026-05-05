@@ -11,7 +11,11 @@ self.addEventListener('install', function () {
 });
 
 self.addEventListener('activate', function (event) {
-  event.waitUntil(self.clients.claim());
+  // No claim() call here — taking control of all same-origin clients (including
+  // the parent shell) would expose /api/ fetches to this SW's interception
+  // logic. The SW naturally controls iframes that load after it activates,
+  // which is sufficient for the proxy use-case.
+  event.waitUntil(Promise.resolve());
 });
 
 function shouldIntercept(url) {
@@ -24,6 +28,12 @@ function shouldIntercept(url) {
 
 self.addEventListener('fetch', function (event) {
   var req = event.request;
+  // PR 8 limitation: the proxy endpoint is GET-only. Non-GET requests
+  // (POST/PUT/DELETE/PATCH) would return 405. Skip interception for those
+  // and let the request hit its native target — most SPA mutations will
+  // CORS-fail until a follow-up PR extends the proxy to support all methods.
+  if (req.method !== 'GET' && req.method !== 'HEAD') return;
+
   var url;
   try { url = new URL(req.url); } catch (_e) { return; }
   if (!shouldIntercept(url)) return;

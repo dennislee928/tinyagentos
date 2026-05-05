@@ -13,47 +13,12 @@
   if (window.__taosCopilot) return;
   window.__taosCopilot = true;
 
-  // ─── Service Worker registration ────────────────────────────────────────────
-  // Registers /__taos/sw.js at root scope and primes it with the iframe's
-  // page base URL + profile ID so it can rewrite relative SPA fetch calls
-  // through the proxy.
-  function registerServiceWorker() {
-    if (!('serviceWorker' in navigator)) return;
-    // The iframe's location is /api/desktop/browser/proxy?profile_id=...&url=...
-    // Extract the original page URL and profile id from the query string.
-    var loc = window.location;
-    var params;
-    try { params = new URLSearchParams(loc.search); } catch (_e) { return; }
-    var pageBaseUrl = params.get('url');
-    var profileId = params.get('profile_id');
-    if (!pageBaseUrl || !profileId) return;
-
-    navigator.serviceWorker.register('/__taos/sw.js', { scope: '/' }).then(function (reg) {
-      var sw = reg.active || reg.installing || reg.waiting;
-      if (!sw) return;
-      function prime() {
-        sw.postMessage({
-          type: 'taos-sw:prime',
-          pageBaseUrl: pageBaseUrl,
-          profileId: profileId,
-        });
-      }
-      if (sw.state === 'activated') {
-        prime();
-      } else {
-        sw.addEventListener('statechange', function () {
-          if (sw.state === 'activated') prime();
-        });
-      }
-    }).catch(function (e) {
-      // SW registration can fail in test/HTTP contexts — log + ignore
-      if (typeof console !== 'undefined' && console.warn) {
-        console.warn('[taos] SW registration failed:', e);
-      }
-    });
-  }
-
-  registerServiceWorker();
+  // ─── Service Worker note ────────────────────────────────────────────────────
+  // SW registration moved to the parent shell (BrowserApp.tsx). This iframe
+  // runs with sandbox="allow-scripts allow-forms allow-popups allow-downloads"
+  // (no allow-same-origin), so navigator.serviceWorker is unavailable here.
+  // The parent registers /__taos/sw.js and primes it via postMessage after
+  // each tab navigation (TabRenderer.tsx).
 
   // ─── WebSocket constructor patch ─────────────────────────────────────────────
   // PR 8 ships a no-op patch that logs cross-origin WS attempts. PR 9 (or

@@ -54,7 +54,24 @@ class TestServiceWorkerAsset:
         r = await client.get("/__taos/sw.js")
         body = r.text
         assert "skipWaiting" in body
-        assert "clients.claim" in body
+        assert "addEventListener('activate'" in body
+
+    @pytest.mark.asyncio
+    async def test_no_clients_claim(self, client):
+        """clients.claim() removed to avoid hijacking the parent shell."""
+        r = await client.get("/__taos/sw.js")
+        body = r.text
+        # The activate handler should be present but NOT call clients.claim()
+        assert "addEventListener('activate'" in body
+        assert "clients.claim" not in body
+
+    @pytest.mark.asyncio
+    async def test_skips_non_get_methods(self, client):
+        """The SW skips POST/PUT/DELETE etc. since the proxy is GET-only."""
+        r = await client.get("/__taos/sw.js")
+        body = r.text
+        assert "req.method !== 'GET'" in body
+        assert "HEAD" in body
 
     @pytest.mark.asyncio
     async def test_cross_origin_not_intercepted(self, client):
