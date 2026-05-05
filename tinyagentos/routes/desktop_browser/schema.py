@@ -74,6 +74,14 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   PRIMARY KEY (user_id, device_id)
 );
 
+CREATE TABLE IF NOT EXISTS push_mutes (
+  user_id   TEXT NOT NULL,
+  agent_id  TEXT NOT NULL,
+  kind      TEXT NOT NULL,
+  muted_at  INTEGER NOT NULL,
+  PRIMARY KEY (user_id, agent_id, kind)
+);
+
 CREATE TABLE IF NOT EXISTS browser_windows (
   user_id        TEXT NOT NULL,
   window_id      TEXT NOT NULL,

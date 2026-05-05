@@ -1,8 +1,8 @@
-"""HTTP endpoints for Web Push subscription CRUD."""
+"""HTTP endpoints for Web Push subscription CRUD and mute management."""
 from __future__ import annotations
 
 import pathlib
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
@@ -132,3 +132,46 @@ async def delete_push_subscription(
         user_id=user_id, device_id=device_id,
     )
     return {"ok": deleted}
+
+
+# ---------------------------------------------------------------------------
+# GET /mutes
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/desktop/browser/push/mutes")
+async def list_push_mutes(
+    request: Request,
+    current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008
+):
+    user_id = str(current_user.get("id") or "")
+    if not user_id:
+        return JSONResponse({"error": "session has no user id"}, status_code=401)
+    mutes = await request.app.state.browser_store.list_push_mutes(user_id)
+    return {"mutes": mutes}
+
+
+# ---------------------------------------------------------------------------
+# PUT /mutes
+# ---------------------------------------------------------------------------
+
+
+class SetMuteRequest(BaseModel):
+    agent_id: str
+    kind: Literal["chat", "drive-started", "download-finished"]
+    muted: bool
+
+
+@router.put("/api/desktop/browser/push/mutes")
+async def set_push_mute(
+    request: Request,
+    body: SetMuteRequest,
+    current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008
+):
+    user_id = str(current_user.get("id") or "")
+    if not user_id:
+        return JSONResponse({"error": "session has no user id"}, status_code=401)
+    await request.app.state.browser_store.set_push_mute(
+        user_id, body.agent_id, body.kind, body.muted
+    )
+    return {"ok": True}
