@@ -177,24 +177,25 @@ async def test_is_driving_false_when_no_row(store):
 
 @pytest.mark.asyncio
 async def test_prune_expired_removes_only_expired(store):
-    # Start a session that we'll let expire
-    await store.start_drive_session(
-        user_id="u2", profile_id="p1", tab_id="t1", agent_id="stale-agent",
+    # Insert a "stale" row directly with a hand-rolled timestamp 100s in the past.
+    # This sidesteps wall-clock flakiness on slow CI runners where any sleep-based
+    # timing test has a non-trivial chance of slipping out of its window.
+    stale_ts = (datetime.now(timezone.utc) - timedelta(seconds=100)).isoformat()
+    await store._db.execute(
+        "INSERT INTO drive_sessions "
+        "(user_id, profile_id, tab_id, agent_id, started_at, last_op_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("u2", "p1", "t1", "stale-agent", stale_ts, stale_ts),
     )
+    await store._db.commit()
 
-    # Wait long enough that stale-agent is well past the 0.5s timeout below.
-    # Using 0.6s so the test isn't flaky under heavy CI load (where the Python
-    # interpreter can pause for hundreds of ms between awaits — a tighter
-    # boundary would let the "fresh" session also slip past the cutoff).
-    await asyncio.sleep(0.6)
-
-    # Now create the fresh session AFTER the sleep so its last_op_at is
-    # guaranteed within the timeout window when we prune.
+    # Fresh session created normally — last_op_at = now.
     await store.start_drive_session(
         user_id="u1", profile_id="p1", tab_id="t1", agent_id="fresh-agent",
     )
 
-    removed = await store.prune_expired_drive_sessions(idle_timeout_s=0.5)
+    # Use the production default timeout (30s) so the boundary is wide.
+    removed = await store.prune_expired_drive_sessions(idle_timeout_s=30.0)
     assert removed == 1  # Only the stale one
 
     rows = await store._db.execute_fetchall(
