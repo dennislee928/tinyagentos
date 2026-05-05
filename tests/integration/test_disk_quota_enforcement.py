@@ -25,7 +25,7 @@ import time
 
 import pytest
 
-from tests.integration.conftest import (
+from .conftest import (
     INTEGRATION,
     _ssh,
     _ssh_vm,
