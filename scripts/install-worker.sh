@@ -131,22 +131,17 @@ worker_disk_cap() {
 }
 
 create_btrfs_loopback() {
-    local img=/var/lib/taos/worker-storage.img
-    local cap_bytes
-    cap_bytes="$(worker_disk_cap)"
-    log "creating btrfs loopback at $img (cap=$cap_bytes bytes)"
-    sudo mkdir -p /var/lib/taos
-    if [[ ! -f "$img" ]]; then
-        sudo truncate -s "$cap_bytes" "$img"
-        sudo mkfs.btrfs -f "$img" >/dev/null
-    else
-        log "loopback already exists; reusing"
-    fi
-    if ! sudo incus storage list --format=csv -c name 2>/dev/null | grep -q '^taos-worker-pool$'; then
-        sudo incus storage create taos-worker-pool btrfs source="$img"
-    else
+    if sudo incus storage list --format=csv -c name 2>/dev/null | grep -q '^taos-worker-pool$'; then
         log "incus storage pool 'taos-worker-pool' already exists; reusing"
+        return 0
     fi
+    local cap_bytes cap_gb
+    cap_bytes="$(worker_disk_cap)"
+    # Convert to GB for incus size= parameter (round down, minimum 5GB)
+    cap_gb=$(( cap_bytes / 1024**3 ))
+    [[ "$cap_gb" -lt 5 ]] && cap_gb=5
+    log "creating btrfs storage pool 'taos-worker-pool' (${cap_gb}GB)"
+    sudo incus storage create taos-worker-pool btrfs "size=${cap_gb}GB"
 }
 
 launch_worker_lxc() {
