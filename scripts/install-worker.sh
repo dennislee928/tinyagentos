@@ -131,7 +131,7 @@ worker_disk_cap() {
 }
 
 create_btrfs_loopback() {
-    if sudo incus storage list --format=csv -c name 2>/dev/null | grep -q '^taos-worker-pool$'; then
+    if sudo incus storage list --format=csv 2>/dev/null | awk -F',' '{print $1}' | grep -q '^taos-worker-pool$'; then
         log "incus storage pool 'taos-worker-pool' already exists; reusing"
         return 0
     fi
@@ -145,7 +145,7 @@ create_btrfs_loopback() {
 }
 
 launch_worker_lxc() {
-    if sudo incus list --format=csv -c name 2>/dev/null | grep -q '^taos-worker$'; then
+    if sudo incus list --format=csv -c n 2>/dev/null | grep -q '^taos-worker$'; then
         log "worker LXC 'taos-worker' already exists; reusing"
         sudo incus start taos-worker 2>/dev/null || true
         return 0
