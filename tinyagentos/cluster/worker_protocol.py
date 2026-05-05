@@ -50,3 +50,9 @@ class WorkerInfo:
     worker_url: str | None = None          # Public URL used by shortcut proxy
     signing_key: bytes = field(default_factory=bytes)  # HMAC key for ticket signing
     tls_cert_provider: str | None = None   # e.g. "letsencrypt", None = plain HTTP
+    # LXC capacity fields (Task 1 — worker-as-LXC architecture)
+    host_lan_ip: str | None = None          # Bare host's LAN IP
+    storage_cap_bytes: int = 0              # Worker btrfs pool loopback max
+    storage_used_bytes: int = 0             # Current actual usage across agent containers
+    bytes_deduped_total: int = 0            # Cumulative bytes reclaimed by bees dedup
+    worker_lxc_image_version: str | None = None  # Ubuntu image version, e.g. "ubuntu/24.04/amd64"

@@ -30,6 +30,12 @@ class WorkerRegister(BaseModel):
     kv_cache_quant_k_support: list[str] = ["fp16"]
     kv_cache_quant_v_support: list[str] = ["fp16"]
     kv_cache_quant_boundary_layer_protect: bool = False
+    # LXC capacity fields — absent from legacy flat-mode workers, safe defaults.
+    host_lan_ip: str | None = None
+    storage_cap_bytes: int = 0
+    storage_used_bytes: int = 0
+    bytes_deduped_total: int = 0
+    worker_lxc_image_version: str | None = None
 
 
 class HeartbeatBody(BaseModel):
@@ -47,6 +53,11 @@ class HeartbeatBody(BaseModel):
     kv_cache_quant_k_support: list[str] | None = None
     kv_cache_quant_v_support: list[str] | None = None
     kv_cache_quant_boundary_layer_protect: bool | None = None
+    # LXC byte counters — optional so legacy workers that don't send them
+    # leave the stored values unchanged (Task 4 wires these through).
+    storage_cap_bytes: int | None = None
+    storage_used_bytes: int | None = None
+    bytes_deduped_total: int | None = None
 
 
 class RouteRequest(BaseModel):
@@ -106,6 +117,11 @@ async def register_worker(request: Request, body: WorkerRegister):
         kv_cache_quant_k_support=body.kv_cache_quant_k_support,
         kv_cache_quant_v_support=body.kv_cache_quant_v_support,
         kv_cache_quant_boundary_layer_protect=body.kv_cache_quant_boundary_layer_protect,
+        host_lan_ip=body.host_lan_ip,
+        storage_cap_bytes=body.storage_cap_bytes,
+        storage_used_bytes=body.storage_used_bytes,
+        bytes_deduped_total=body.bytes_deduped_total,
+        worker_lxc_image_version=body.worker_lxc_image_version,
     )
     await cluster.register_worker(info)
     return {"status": "registered", "name": body.name}
