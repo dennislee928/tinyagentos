@@ -17,6 +17,7 @@ import {
   type SearchEngine,
 } from "@/stores/browser-settings-store";
 import { AgentCapabilitiesPanel } from "./AgentCapabilitiesPanel";
+import { SitePermissionsPanel } from "./SitePermissionsPanel";
 import { bootstrapPushSubscription } from "../../lib/browser-push-bootstrap";
 
 interface SettingsPanelProps {
@@ -33,6 +34,7 @@ export function SettingsPanel({ profileId, onClose }: SettingsPanelProps) {
   const setSearchEngine = useBrowserSettingsStore((s) => s.setSearchEngine);
   const ref = useRef<HTMLDivElement | null>(null);
   const [capsOpen, setCapsOpen] = useState(false);
+  const [sitePermsOpen, setSitePermsOpen] = useState(false);
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
     typeof Notification !== "undefined" ? Notification.permission : "default",
   );
@@ -66,8 +68,8 @@ export function SettingsPanel({ profileId, onClose }: SettingsPanelProps) {
     };
   }, [onClose]);
 
-  // Escape key dismiss — when the capabilities sub-modal is open, Escape
-  // should close it first; a second Escape then closes the settings panel.
+  // Escape key dismiss — when a sub-modal is open, Escape closes it first;
+  // a second Escape then closes the settings panel.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
@@ -75,11 +77,15 @@ export function SettingsPanel({ profileId, onClose }: SettingsPanelProps) {
         setCapsOpen(false);
         return;
       }
+      if (sitePermsOpen) {
+        setSitePermsOpen(false);
+        return;
+      }
       onClose();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [onClose, capsOpen]);
+  }, [onClose, capsOpen, sitePermsOpen]);
 
   return (
     <div
@@ -178,6 +184,25 @@ export function SettingsPanel({ profileId, onClose }: SettingsPanelProps) {
         <AgentCapabilitiesPanel
           profileId={profileId}
           onClose={() => setCapsOpen(false)}
+        />
+      )}
+
+      {/* Site permissions */}
+      <div className="border-t border-shell-border-subtle pt-3">
+        <button
+          type="button"
+          onClick={() => setSitePermsOpen(true)}
+          className="w-full text-left text-xs text-shell-text hover:text-accent flex items-center justify-between"
+        >
+          <span>Site permissions</span>
+          <span className="text-shell-text-secondary">›</span>
+        </button>
+      </div>
+
+      {sitePermsOpen && (
+        <SitePermissionsPanel
+          profileId={profileId}
+          onClose={() => setSitePermsOpen(false)}
         />
       )}
 
