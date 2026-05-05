@@ -190,7 +190,13 @@ phase1_host_prep() {
 
 setup_port_forward() {
     local worker_ip
-    worker_ip="$(sudo incus list taos-worker --format=csv -c 4 2>/dev/null | head -1 | awk '{print $1}')"
+    # The LXC may take a few seconds to acquire a DHCP address after the
+    # exec-reachability check in launch_worker_lxc, so retry for up to 30s.
+    for _i in $(seq 1 15); do
+        worker_ip="$(sudo incus list taos-worker --format=csv -c 4 2>/dev/null | head -1 | awk '{print $1}')"
+        [[ -n "$worker_ip" ]] && break
+        sleep 2
+    done
     if [[ -z "$worker_ip" ]]; then
         die "could not determine taos-worker IP for port-forward"
     fi
