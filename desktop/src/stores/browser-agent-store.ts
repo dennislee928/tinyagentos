@@ -5,6 +5,27 @@ const MAX_PANEL_WIDTH = 480;
 const DEFAULT_PANEL_WIDTH = 280;
 const WATCHING_DECAY_MS = 3000;
 
+export interface AnnotationCursor {
+  kind: "cursor";
+  id: string;
+  agentId: string;
+  x: number;
+  y: number;
+  label?: string;
+  color?: string;
+}
+
+export interface AnnotationArrow {
+  kind: "arrow";
+  id: string;
+  agentId: string;
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  color?: string;
+}
+
+export type Annotation = AnnotationCursor | AnnotationArrow;
+
 export interface AgentPanelState {
   isOpen: boolean;
   activeAgentId: string | null;
@@ -44,6 +65,9 @@ export interface BrowserAgentState {
   /** Recent page events per (tab, agent). Key: same. Capped at last 5 per key. */
   recentEvents: Record<string, AgentEvent[]>;
 
+  /** Per-(window, tab) annotation overlay. Key: `${windowId}:${tabId}` */
+  annotations: Record<string, Annotation[]>;
+
   openPanel(windowId: string, tabId: string, agentId: string): void;
   closePanel(windowId: string, tabId: string): void;
   togglePanel(windowId: string, tabId: string, agentId: string): void;
@@ -56,6 +80,10 @@ export interface BrowserAgentState {
 
   appendMessage(windowId: string, tabId: string, agentId: string, message: AgentMessage): void;
   appendEvent(windowId: string, tabId: string, agentId: string, event: AgentEvent): void;
+
+  addAnnotation(windowId: string, tabId: string, ann: Annotation): void;
+  clearAnnotation(windowId: string, tabId: string, id: string): void;
+  clearAnnotations(windowId: string, tabId: string, agentId?: string): void;
 }
 
 export const useBrowserAgentStore = create<BrowserAgentState>((set, get) => ({
@@ -63,6 +91,7 @@ export const useBrowserAgentStore = create<BrowserAgentState>((set, get) => ({
   lastEventAt: {},
   messages: {},
   recentEvents: {},
+  annotations: {},
 
   openPanel(windowId, tabId, agentId) {
     set((state) => {
@@ -170,6 +199,52 @@ export const useBrowserAgentStore = create<BrowserAgentState>((set, get) => ({
       return {
         recentEvents: {
           ...state.recentEvents,
+          [key]: updated,
+        },
+      };
+    });
+  },
+
+  addAnnotation(windowId, tabId, ann) {
+    set((state) => {
+      const key = `${windowId}:${tabId}`;
+      const existing = state.annotations[key] ?? [];
+      const idx = existing.findIndex((a) => a.id === ann.id);
+      const updated = idx >= 0
+        ? existing.map((a) => (a.id === ann.id ? ann : a))
+        : [...existing, ann];
+      return {
+        annotations: {
+          ...state.annotations,
+          [key]: updated,
+        },
+      };
+    });
+  },
+
+  clearAnnotation(windowId, tabId, id) {
+    set((state) => {
+      const key = `${windowId}:${tabId}`;
+      const existing = state.annotations[key] ?? [];
+      return {
+        annotations: {
+          ...state.annotations,
+          [key]: existing.filter((a) => a.id !== id),
+        },
+      };
+    });
+  },
+
+  clearAnnotations(windowId, tabId, agentId) {
+    set((state) => {
+      const key = `${windowId}:${tabId}`;
+      const existing = state.annotations[key] ?? [];
+      const updated = agentId
+        ? existing.filter((a) => a.agentId !== agentId)
+        : [];
+      return {
+        annotations: {
+          ...state.annotations,
           [key]: updated,
         },
       };
