@@ -377,6 +377,66 @@ describe("AddressBar — bookmark star button", () => {
     );
   });
 
+  it("rapid double-click only fires one addBookmark call (single-flight)", async () => {
+    const tabId = useBrowserStore.getState().getWindow(TEST_WINDOW_ID)!.tabs[0].id;
+    useBrowserStore.getState().navigateTab(TEST_WINDOW_ID, tabId, "https://a.test/");
+
+    // Make addBookmark slow enough that the second click arrives before the first resolves
+    let resolveAdd!: (id: string) => void;
+    vi.spyOn(bookmarksApi, "addBookmark").mockReturnValue(
+      new Promise<string>((res) => { resolveAdd = res; }),
+    );
+
+    render(<AddressBar windowId={TEST_WINDOW_ID} />);
+    const btn = await screen.findByRole("button", { name: /add bookmark/i });
+
+    // Two rapid clicks
+    await act(async () => { fireEvent.click(btn); });
+    await act(async () => { fireEvent.click(btn); });
+
+    // Resolve the pending add
+    await act(async () => { resolveAdd("bm-1"); });
+
+    expect(bookmarksApi.addBookmark).toHaveBeenCalledTimes(1);
+  });
+
+  it("profile switch clears stale bookmarks and repopulates", async () => {
+    const tabId = useBrowserStore.getState().getWindow(TEST_WINDOW_ID)!.tabs[0].id;
+    useBrowserStore.getState().navigateTab(TEST_WINDOW_ID, tabId, "https://a.test/");
+
+    // First profile has the page bookmarked
+    vi.spyOn(bookmarksApi, "listBookmarks").mockResolvedValueOnce([
+      { bookmark_id: "bm-profile1", url: "https://a.test/", title: "A", created_at: 1000 },
+    ]);
+
+    render(<AddressBar windowId={TEST_WINDOW_ID} />);
+
+    // Star should be active (bookmarked) for profile "personal"
+    const btn = await screen.findByRole("button", { name: /remove bookmark/i });
+    expect(btn).toHaveAttribute("aria-pressed", "true");
+
+    // Now switch to a profile that has NO bookmarks
+    vi.spyOn(bookmarksApi, "listBookmarks").mockResolvedValue([]);
+    await act(async () => {
+      useBrowserStore.getState().windows[TEST_WINDOW_ID]!.profileId = "work";
+      // Trigger a re-render by updating state
+      useBrowserStore.setState((s) => ({
+        windows: {
+          ...s.windows,
+          [TEST_WINDOW_ID]: { ...s.windows[TEST_WINDOW_ID]!, profileId: "work" },
+        },
+      }));
+    });
+
+    // Star should now be inactive (not bookmarked) for profile "work"
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /add bookmark/i })).toHaveAttribute(
+        "aria-pressed",
+        "false",
+      ),
+    );
+  });
+
   it("clicking star again calls removeBookmark and sets aria-pressed=false", async () => {
     vi.spyOn(bookmarksApi, "listBookmarks").mockResolvedValue([
       { bookmark_id: "bm-existing", url: "https://a.test/", title: "A", created_at: 1000 },

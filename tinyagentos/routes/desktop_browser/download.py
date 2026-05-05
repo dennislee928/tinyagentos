@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 from urllib.parse import quote, unquote, urljoin, urlparse, urlsplit
 
@@ -53,6 +54,21 @@ def _filename_from_url(url: str) -> str:
     return "download"
 
 
+def _filename_from_content_disposition(cd: str) -> str:
+    """Parse filename or filename* from Content-Disposition.  Returns '' on miss."""
+    # Prefer RFC 5987 filename*=UTF-8''xxx
+    m = re.search(r"filename\*=UTF-8''([^;\s]+)", cd, re.IGNORECASE)
+    if m:
+        return unquote(m.group(1))
+    m = re.search(r'filename="([^"]+)"', cd, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    m = re.search(r"filename=([^;\s]+)", cd, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return ""
+
+
 def _safe_filename(filename: str) -> str:
     """Strip path-traversal components and unsafe chars from a caller-supplied filename."""
     # os.path.basename removes directory components (catches "../../etc/passwd")
@@ -62,49 +78,33 @@ def _safe_filename(filename: str) -> str:
     return base or "download"
 
 
-async def _resolve_final_url(
-    initial_url: str,
-    cookies: httpx.Cookies,
-) -> tuple[str, httpx.Response] | tuple[None, JSONResponse]:
-    """Walk the redirect chain with per-hop SSRF validation.
+async def _walk_redirects_streaming(
+    http: httpx.AsyncClient,
+    url: str,
+    max_hops: int = _MAX_HOPS,
+) -> tuple[httpx.Response, str]:
+    """Walk redirects with per-hop SSRF re-validation, returning an OPEN streaming response.
 
-    Returns (final_url, response) on success, or (None, error_JSONResponse) on failure.
-    The returned response on success is the first non-redirect response — it is NOT
-    yet read (we hand it back to stream from).  Caller must close it if not streamed.
+    Caller is responsible for closing the returned response (and the client).
+    Raises SsrfBlockedError if a redirect target is blocked.
+    Raises httpx.TooManyRedirects on too many hops.
+    Raises httpx.HTTPError on fetch failure.
     """
-    fetch_url = initial_url
-    async with httpx.AsyncClient(
-        follow_redirects=False, timeout=_FETCH_TIMEOUT, cookies=cookies,
-    ) as http:
-        for _hop in range(_MAX_HOPS):
-            try:
-                response = await http.get(fetch_url)
-            except httpx.HTTPError as e:
-                _logger.info("browser download fetch error: err=%s", e)
-                return None, JSONResponse({"error": "fetch failed"}, status_code=502)
-
-            if response.is_redirect:
-                location = response.headers.get("location")
-                if not location:
-                    return None, JSONResponse(
-                        {"error": "redirect missing Location"}, status_code=502,
-                    )
-                fetch_url = urljoin(fetch_url, location)
-                try:
-                    validate_url_or_raise(fetch_url)
-                except SsrfBlockedError as e:
-                    parsed = urlsplit(fetch_url)
-                    _logger.info(
-                        "browser download SSRF block on redirect: scheme=%r host=%r reason=%s",
-                        parsed.scheme, parsed.hostname, e,
-                    )
-                    return None, JSONResponse({"error": "URL blocked"}, status_code=403)
-                continue
-
-            # Non-redirect — we have the final response
-            return fetch_url, response
-
-        return None, JSONResponse({"error": "redirect chain too long"}, status_code=502)
+    fetch_url = url
+    for _hop in range(max_hops):
+        request_obj = http.build_request("GET", fetch_url)
+        response = await http.send(request_obj, stream=True)
+        if response.is_redirect:
+            location = response.headers.get("location", "")
+            await response.aclose()
+            if not location:
+                raise httpx.RemoteProtocolError("redirect missing Location", request=request_obj)
+            fetch_url = urljoin(fetch_url, location)
+            validate_url_or_raise(fetch_url)
+            continue
+        # Non-redirect — return the open streaming response
+        return response, fetch_url
+    raise httpx.TooManyRedirects("too many redirects", request=http.build_request("GET", fetch_url))
 
 
 @router.get("/api/desktop/browser/download")
@@ -135,11 +135,6 @@ async def download_endpoint(
         )
         return JSONResponse({"error": "URL blocked"}, status_code=403)
 
-    # Determine output filename before fetching
-    final_name = (
-        _safe_filename(filename) if filename else _safe_filename(_filename_from_url(url))
-    )
-
     # Load cookies for the initial host; after redirects the host may differ
     # but the jar covers the profile broadly enough for common use cases.
     host = urlparse(url).hostname or ""
@@ -148,34 +143,54 @@ async def download_endpoint(
         user_id=user_id, profile_id=profile_id, host=host,
     )
 
-    # Walk redirects with per-hop SSRF re-validation, collect final response
-    result = await _resolve_final_url(url, cookies)
-    final_url, maybe_response = result
+    # Manage the AsyncClient lifetime — don't close until the streamer finishes.
+    http = httpx.AsyncClient(
+        follow_redirects=False, timeout=_FETCH_TIMEOUT, cookies=cookies,
+    )
 
-    if final_url is None:
-        # maybe_response is a JSONResponse carrying the error
-        return maybe_response
-
-    final_response: httpx.Response = maybe_response  # type: ignore[assignment]
-
-    # Persist any cookies from the redirect walk
     try:
-        await persist_response_cookies(
-            request.app.state.browser_cookie_store,
-            final_response.cookies,
-            user_id=user_id, profile_id=profile_id,
+        response, final_url = await _walk_redirects_streaming(http, url)
+    except SsrfBlockedError as e:
+        await http.aclose()
+        parsed = urlsplit(url)
+        _logger.info(
+            "browser download SSRF block on redirect: scheme=%r host=%r reason=%s",
+            parsed.scheme, parsed.hostname, e,
         )
-    except Exception:
-        pass  # cookie persistence failure is non-fatal
+        return JSONResponse({"error": "URL blocked"}, status_code=403)
+    except httpx.TooManyRedirects:
+        await http.aclose()
+        return JSONResponse({"error": "redirect chain too long"}, status_code=502)
+    except httpx.HTTPError as e:
+        await http.aclose()
+        _logger.info("browser download fetch error: err=%s", e)
+        return JSONResponse({"error": "fetch failed"}, status_code=502)
 
-    # Stream body to client
+    # Filename: caller-supplied > upstream Content-Disposition > URL path
+    upstream_cd = response.headers.get("content-disposition", "")
+    upstream_filename = _filename_from_content_disposition(upstream_cd)
+    final_name = _safe_filename(
+        filename or upstream_filename or _filename_from_url(final_url)
+    )
+
     async def streamer():
         try:
-            async for chunk in final_response.aiter_bytes():
+            async for chunk in response.aiter_bytes():
                 yield chunk
-        except httpx.HTTPError as e:
-            _logger.info("browser download stream error: err=%s", e)
+            try:
+                await persist_response_cookies(
+                    request.app.state.browser_cookie_store,
+                    response.cookies,
+                    user_id=user_id, profile_id=profile_id,
+                )
+            except Exception:
+                pass  # cookie persistence failure is non-fatal
+        except httpx.HTTPError as exc:
+            _logger.info("browser download stream error: err=%s", exc)
             # Can't send a new response once streaming has started; just stop.
+        finally:
+            await response.aclose()
+            await http.aclose()
 
     # RFC 5987 encoded filename for non-ASCII safety
     safe_quoted = quote(final_name, safe="")

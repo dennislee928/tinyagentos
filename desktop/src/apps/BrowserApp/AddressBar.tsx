@@ -51,6 +51,8 @@ export function AddressBar({ windowId }: AddressBarProps) {
   const [bookmarked, setBookmarked] = useState<{ id: string } | null>(null);
   // url → bookmark_id cache so tab switches don't re-fetch
   const bookmarksRef = useRef<Map<string, string>>(new Map());
+  // Single-flight guard for toggleBookmark
+  const pendingRef = useRef(false);
 
   // Focus the address bar when Cmd+L fires for this window
   useEffect(() => {
@@ -92,19 +94,25 @@ export function AddressBar({ windowId }: AddressBarProps) {
     };
   }, [inputValue, hasFocus, win?.profileId]);
 
-  // On mount, populate the bookmarks cache from the API once
+  // Populate (or repopulate on profile change) the bookmarks cache from the API.
+  // Clears the map first so stale entries from the previous profile can't bleed through.
   useEffect(() => {
     if (!win?.profileId) return;
+    bookmarksRef.current.clear();
+    setBookmarked(null);
+    let cancelled = false;
     listBookmarks(win.profileId).then((bms) => {
+      if (cancelled) return;
       for (const bm of bms) {
         bookmarksRef.current.set(bm.url, bm.bookmark_id);
       }
-      // Reflect current tab immediately after cache is populated
+      // Re-evaluate current tab's bookmark state
       if (activeTab?.url && activeTab.url !== "about:blank") {
         const id = bookmarksRef.current.get(activeTab.url);
         setBookmarked(id ? { id } : null);
       }
     });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [win?.profileId]);
 
@@ -118,22 +126,54 @@ export function AddressBar({ windowId }: AddressBarProps) {
     setBookmarked(id ? { id } : null);
   }, [activeTab?.url]);
 
+  // Cross-window bookmark sync: when another AddressBar instance toggles a
+  // bookmark, propagate the change into this cache so the star stays accurate.
+  useEffect(() => {
+    if (!win?.profileId) return;
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ profileId: string; url: string; bookmarkId: string | null }>;
+      if (ce.detail.profileId !== win?.profileId) return;
+      if (ce.detail.bookmarkId) {
+        bookmarksRef.current.set(ce.detail.url, ce.detail.bookmarkId);
+      } else {
+        bookmarksRef.current.delete(ce.detail.url);
+      }
+      if (activeTab?.url === ce.detail.url) {
+        setBookmarked(ce.detail.bookmarkId ? { id: ce.detail.bookmarkId } : null);
+      }
+    };
+    window.addEventListener("taos-browser:bookmark-changed", handler);
+    return () => window.removeEventListener("taos-browser:bookmark-changed", handler);
+  }, [win?.profileId, activeTab?.url]);
+
   if (!win || !activeTab) return null;
 
   async function toggleBookmark() {
     if (!activeTab?.url || activeTab.url === "about:blank" || !win?.profileId) return;
-    if (bookmarked) {
-      const ok = await removeBookmark(win.profileId, bookmarked.id);
-      if (ok) {
-        bookmarksRef.current.delete(activeTab.url);
-        setBookmarked(null);
+    if (pendingRef.current) return;
+    pendingRef.current = true;
+    try {
+      if (bookmarked) {
+        const ok = await removeBookmark(win.profileId, bookmarked.id);
+        if (ok) {
+          bookmarksRef.current.delete(activeTab.url);
+          setBookmarked(null);
+          window.dispatchEvent(new CustomEvent("taos-browser:bookmark-changed", {
+            detail: { profileId: win.profileId, url: activeTab.url, bookmarkId: null },
+          }));
+        }
+      } else {
+        const id = await addBookmark(win.profileId, activeTab.url, activeTab.title || activeTab.url);
+        if (id) {
+          bookmarksRef.current.set(activeTab.url, id);
+          setBookmarked({ id });
+          window.dispatchEvent(new CustomEvent("taos-browser:bookmark-changed", {
+            detail: { profileId: win.profileId, url: activeTab.url, bookmarkId: id },
+          }));
+        }
       }
-    } else {
-      const id = await addBookmark(win.profileId, activeTab.url, activeTab.title || activeTab.url);
-      if (id) {
-        bookmarksRef.current.set(activeTab.url, id);
-        setBookmarked({ id });
-      }
+    } finally {
+      pendingRef.current = false;
     }
   }
 

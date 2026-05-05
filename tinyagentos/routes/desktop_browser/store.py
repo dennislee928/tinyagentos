@@ -1003,22 +1003,30 @@ class BrowserStore(BaseStore):
           - "*"            matches any host
           - "*.example.com" matches "example.com" and "foo.example.com"
           - anything else: exact match
+
+        When multiple patterns match, the most specific wins:
+          exact (2) > subdomain wildcard (1) > global wildcard (0)
         """
         rows = await self.list_site_permissions(user_id=user_id, profile_id=profile_id)
+        best_score = -1
+        best_state: str | None = None
         for row in rows:
             if row["permission"] != permission:
                 continue
             pattern = row["host_pattern"]
-            if pattern == "*":
-                matched = True
+            score = -1
+            if pattern == host:
+                score = 2
             elif pattern.startswith("*."):
                 domain = pattern[2:]
-                matched = host == domain or host.endswith("." + domain)
-            else:
-                matched = host == pattern
-            if matched:
-                return row["state"]
-        return None
+                if host == domain or host.endswith("." + domain):
+                    score = 1
+            elif pattern == "*":
+                score = 0
+            if score > best_score:
+                best_score = score
+                best_state = row["state"]
+        return best_state
 
 
 _KNOWN_SITE_PERMISSIONS = {

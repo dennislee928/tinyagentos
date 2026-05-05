@@ -242,6 +242,53 @@ async def test_check_site_permission_returns_none_when_no_grant(store):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+async def test_check_site_permission_most_specific_wins(store):
+    """Exact host match beats wildcard even when wildcard was set first."""
+    # Older wildcard-allow
+    await store.set_site_permission(
+        user_id="u1", profile_id="p1", host_pattern="*",
+        permission="notifications", state="allow",
+    )
+    # Newer specific-deny
+    await store.set_site_permission(
+        user_id="u1", profile_id="p1", host_pattern="example.com",
+        permission="notifications", state="deny",
+    )
+    # Should return deny — most specific wins
+    assert await store.check_site_permission(
+        user_id="u1", profile_id="p1", host="example.com",
+        permission="notifications",
+    ) == "deny"
+    # Other hosts still get the wildcard
+    assert await store.check_site_permission(
+        user_id="u1", profile_id="p1", host="other.com",
+        permission="notifications",
+    ) == "allow"
+
+
+@pytest.mark.asyncio
+async def test_check_site_permission_subdomain_wildcard_beats_global_wildcard(store):
+    """*.example.com beats * for a matching subdomain."""
+    await store.set_site_permission(
+        user_id="u1", profile_id="p1", host_pattern="*",
+        permission="geolocation", state="allow",
+    )
+    await store.set_site_permission(
+        user_id="u1", profile_id="p1", host_pattern="*.example.com",
+        permission="geolocation", state="deny",
+    )
+    assert await store.check_site_permission(
+        user_id="u1", profile_id="p1", host="sub.example.com",
+        permission="geolocation",
+    ) == "deny"
+    # Non-matching host still gets global wildcard
+    assert await store.check_site_permission(
+        user_id="u1", profile_id="p1", host="other.com",
+        permission="geolocation",
+    ) == "allow"
+
+
+@pytest.mark.asyncio
 async def test_multi_user_isolation(store):
     await store.set_site_permission(
         user_id="user-a", profile_id="p1",

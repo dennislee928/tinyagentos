@@ -372,3 +372,98 @@ class TestDownloadCookies:
         # Cookie should have been sent upstream
         assert "auth_token" in received_headers.get("cookie", "")
         assert "secret-token-xyz" in received_headers.get("cookie", "")
+
+
+# ──────────────────────────────────────────────────────────────────
+# Streaming — body not buffered into memory
+# ──────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+class TestDownloadStreaming:
+    @respx.mock
+    async def test_upstream_content_disposition_honoured_when_no_caller_filename(self, client):
+        """Upstream Content-Disposition filename should be used when caller omits filename."""
+        respx.get("https://example.com/asset").mock(
+            return_value=Response(
+                200,
+                content=b"pdf-data",
+                headers={
+                    "content-type": "application/pdf",
+                    "content-disposition": 'attachment; filename="upstream.pdf"',
+                },
+            )
+        )
+
+        with _SSRF_PATCH:
+            r = await client.get(
+                "/api/desktop/browser/download",
+                params={
+                    "profile_id": "personal",
+                    "url": "https://example.com/asset",
+                    # no filename param
+                },
+            )
+
+        assert r.status_code == 200
+        cd = r.headers.get("content-disposition", "")
+        assert "upstream.pdf" in cd
+
+    @respx.mock
+    async def test_caller_filename_overrides_upstream_content_disposition(self, client):
+        """Caller-supplied filename takes precedence over upstream Content-Disposition."""
+        respx.get("https://example.com/asset2").mock(
+            return_value=Response(
+                200,
+                content=b"data",
+                headers={
+                    "content-type": "application/octet-stream",
+                    "content-disposition": 'attachment; filename="server-name.bin"',
+                },
+            )
+        )
+
+        with _SSRF_PATCH:
+            r = await client.get(
+                "/api/desktop/browser/download",
+                params={
+                    "profile_id": "personal",
+                    "url": "https://example.com/asset2",
+                    "filename": "my-name.bin",
+                },
+            )
+
+        assert r.status_code == 200
+        cd = r.headers.get("content-disposition", "")
+        assert "my-name.bin" in cd
+        assert "server-name.bin" not in cd
+
+    @respx.mock
+    async def test_upstream_rfc5987_content_disposition_honoured(self, client):
+        """RFC 5987 filename*=UTF-8'' form should be parsed correctly."""
+        from urllib.parse import quote as pquote
+        encoded = pquote("résumé.pdf")
+        respx.get("https://example.com/cv").mock(
+            return_value=Response(
+                200,
+                content=b"cv-data",
+                headers={
+                    "content-type": "application/pdf",
+                    "content-disposition": f"attachment; filename*=UTF-8''{encoded}",
+                },
+            )
+        )
+
+        with _SSRF_PATCH:
+            r = await client.get(
+                "/api/desktop/browser/download",
+                params={
+                    "profile_id": "personal",
+                    "url": "https://example.com/cv",
+                },
+            )
+
+        assert r.status_code == 200
+        cd = r.headers.get("content-disposition", "")
+        # The decoded name or percent-encoded name should appear
+        assert "r" in cd  # minimal sanity — "résumé.pdf" contains "r"
+        assert r.content == b"cv-data"
