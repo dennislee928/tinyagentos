@@ -13,6 +13,74 @@
   if (window.__taosCopilot) return;
   window.__taosCopilot = true;
 
+  // ─── Service Worker registration ────────────────────────────────────────────
+  // Registers /__taos/sw.js at root scope and primes it with the iframe's
+  // page base URL + profile ID so it can rewrite relative SPA fetch calls
+  // through the proxy.
+  function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) return;
+    // The iframe's location is /api/desktop/browser/proxy?profile_id=...&url=...
+    // Extract the original page URL and profile id from the query string.
+    var loc = window.location;
+    var params;
+    try { params = new URLSearchParams(loc.search); } catch (_e) { return; }
+    var pageBaseUrl = params.get('url');
+    var profileId = params.get('profile_id');
+    if (!pageBaseUrl || !profileId) return;
+
+    navigator.serviceWorker.register('/__taos/sw.js', { scope: '/' }).then(function (reg) {
+      var sw = reg.active || reg.installing || reg.waiting;
+      if (!sw) return;
+      function prime() {
+        sw.postMessage({
+          type: 'taos-sw:prime',
+          pageBaseUrl: pageBaseUrl,
+          profileId: profileId,
+        });
+      }
+      if (sw.state === 'activated') {
+        prime();
+      } else {
+        sw.addEventListener('statechange', function () {
+          if (sw.state === 'activated') prime();
+        });
+      }
+    }).catch(function (e) {
+      // SW registration can fail in test/HTTP contexts — log + ignore
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('[taos] SW registration failed:', e);
+      }
+    });
+  }
+
+  registerServiceWorker();
+
+  // ─── WebSocket constructor patch ─────────────────────────────────────────────
+  // PR 8 ships a no-op patch that logs cross-origin WS attempts. PR 9 (or
+  // follow-up) will add real WS proxying through the server. The hook is in
+  // place now so future code can extend the wrapper.
+  (function patchWebSocket() {
+    if (!window.WebSocket || window.WebSocket.__taosPatched) return;
+    var OriginalWebSocket = window.WebSocket;
+
+    function PatchedWebSocket(url, protocols) {
+      var u;
+      try { u = new URL(url, window.location.href); } catch (_e) {
+        return new OriginalWebSocket(url, protocols);
+      }
+      if (u.origin !== window.location.origin) {
+        // Cross-origin WS — would need server-side WS proxying (PR 9)
+        if (typeof console !== 'undefined' && console.warn) {
+          console.warn('[taos] WebSocket to', url, 'is not proxied — PR 9 will add support');
+        }
+      }
+      return new OriginalWebSocket(url, protocols);
+    }
+    PatchedWebSocket.prototype = OriginalWebSocket.prototype;
+    PatchedWebSocket.__taosPatched = true;
+    window.WebSocket = PatchedWebSocket;
+  })();
+
   var meta = document.querySelector('meta[name="taos-copilot-ws"]');
   if (!meta) return; // injector didn't run; bail silently
 
