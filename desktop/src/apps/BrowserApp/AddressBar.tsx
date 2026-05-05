@@ -15,11 +15,12 @@
  * Settings.
  */
 import { useEffect, useRef, useState } from "react";
-import { BookOpen } from "lucide-react";
+import { BookOpen, Star } from "lucide-react";
 import { useBrowserStore } from "@/stores/browser-store";
 import { useBrowserSettingsStore, searchUrlFor } from "@/stores/browser-settings-store";
 import { fetchSuggestions, type Suggestion } from "@/lib/browser-suggest-api";
 import { extractReadable } from "@/lib/browser-extract-api";
+import { listBookmarks, addBookmark, removeBookmark } from "@/lib/browser-bookmarks-api";
 import { AddressSuggest } from "./AddressSuggest";
 
 const SUGGEST_DEBOUNCE_MS = 150;
@@ -45,6 +46,11 @@ export function AddressBar({ windowId }: AddressBarProps) {
   const suggestTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Guard against duplicate in-flight extract requests for the same URL
   const inflightUrlRef = useRef<string | null>(null);
+
+  // Bookmark state: null = not bookmarked, { id } = bookmarked
+  const [bookmarked, setBookmarked] = useState<{ id: string } | null>(null);
+  // url → bookmark_id cache so tab switches don't re-fetch
+  const bookmarksRef = useRef<Map<string, string>>(new Map());
 
   // Focus the address bar when Cmd+L fires for this window
   useEffect(() => {
@@ -86,7 +92,50 @@ export function AddressBar({ windowId }: AddressBarProps) {
     };
   }, [inputValue, hasFocus, win?.profileId]);
 
+  // On mount, populate the bookmarks cache from the API once
+  useEffect(() => {
+    if (!win?.profileId) return;
+    listBookmarks(win.profileId).then((bms) => {
+      for (const bm of bms) {
+        bookmarksRef.current.set(bm.url, bm.bookmark_id);
+      }
+      // Reflect current tab immediately after cache is populated
+      if (activeTab?.url && activeTab.url !== "about:blank") {
+        const id = bookmarksRef.current.get(activeTab.url);
+        setBookmarked(id ? { id } : null);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [win?.profileId]);
+
+  // Keep star in sync when active tab URL changes
+  useEffect(() => {
+    if (!activeTab?.url || activeTab.url === "about:blank") {
+      setBookmarked(null);
+      return;
+    }
+    const id = bookmarksRef.current.get(activeTab.url);
+    setBookmarked(id ? { id } : null);
+  }, [activeTab?.url]);
+
   if (!win || !activeTab) return null;
+
+  async function toggleBookmark() {
+    if (!activeTab?.url || activeTab.url === "about:blank" || !win?.profileId) return;
+    if (bookmarked) {
+      const ok = await removeBookmark(win.profileId, bookmarked.id);
+      if (ok) {
+        bookmarksRef.current.delete(activeTab.url);
+        setBookmarked(null);
+      }
+    } else {
+      const id = await addBookmark(win.profileId, activeTab.url, activeTab.title || activeTab.url);
+      if (id) {
+        bookmarksRef.current.set(activeTab.url, id);
+        setBookmarked({ id });
+      }
+    }
+  }
 
   function commitNavigation(target: string) {
     const trimmed = target.trim();
@@ -178,9 +227,30 @@ export function AddressBar({ windowId }: AddressBarProps) {
           }
         }}
         className={`w-full bg-shell-bg-deep text-shell-text px-2 py-0.5 rounded text-xs border border-shell-border-subtle focus:border-accent focus:outline-none ${
-          activeTab?.readerAvailable ? "pr-7" : ""
+          activeTab?.readerAvailable && activeTab.url !== "about:blank"
+            ? "pr-14"
+            : activeTab?.readerAvailable || activeTab?.url !== "about:blank"
+            ? "pr-7"
+            : ""
         }`}
       />
+      {activeTab?.url && activeTab.url !== "about:blank" && (
+        <button
+          type="button"
+          aria-label={bookmarked ? "Remove bookmark" : "Add bookmark"}
+          aria-pressed={!!bookmarked}
+          onClick={toggleBookmark}
+          className={`absolute top-1/2 -translate-y-1/2 p-0.5 rounded ${
+            activeTab?.readerAvailable ? "right-7" : "right-1.5"
+          } ${
+            bookmarked
+              ? "text-accent"
+              : "text-shell-text-secondary hover:text-shell-text"
+          }`}
+        >
+          <Star size={12} fill={bookmarked ? "currentColor" : "none"} />
+        </button>
+      )}
       {activeTab?.readerAvailable && (
         <button
           type="button"
