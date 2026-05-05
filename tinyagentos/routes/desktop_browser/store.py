@@ -327,6 +327,112 @@ class BrowserStore(BaseStore):
         ]
 
 
+    async def list_bookmarks_for_profile(
+        self,
+        *,
+        user_id: str,
+        profile_id: str,
+    ) -> list[dict]:
+        """Returns [{bookmark_id, url, title, created_at}, ...] ordered by created_at DESC."""
+        if not user_id or not profile_id:
+            raise ValueError("user_id and profile_id required")
+        assert self._db is not None
+        cursor = await self._db.execute(
+            "SELECT bookmark_id, url, title, created_at "
+            "FROM bookmarks "
+            "WHERE user_id = ? AND profile_id = ? "
+            "ORDER BY created_at DESC",
+            (user_id, profile_id),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "bookmark_id": r[0],
+                "url": r[1],
+                "title": r[2],
+                "created_at": r[3],
+            }
+            for r in rows
+        ]
+
+    async def create_bookmark(
+        self,
+        *,
+        user_id: str,
+        profile_id: str,
+        url: str,
+        title: str,
+    ) -> str:
+        """INSERT a bookmark; returns the new bookmark_id."""
+        import secrets
+        import time
+        if not user_id:
+            raise ValueError("user_id is required")
+        if not profile_id:
+            raise ValueError("profile_id is required")
+        if not url:
+            raise ValueError("url is required")
+        if not title:
+            raise ValueError("title is required")
+        assert self._db is not None
+        bookmark_id = secrets.token_urlsafe(12)
+        created_at = time.time_ns() // 1_000  # microseconds — unique within a request
+        await self._db.execute(
+            "INSERT INTO bookmarks "
+            "(user_id, profile_id, bookmark_id, folder_path, url, title, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, profile_id, bookmark_id, "/", url, title, created_at),
+        )
+        await self._db.commit()
+        return bookmark_id
+
+    async def delete_bookmark(
+        self,
+        *,
+        user_id: str,
+        profile_id: str,
+        bookmark_id: str,
+    ) -> bool:
+        """DELETE; returns True if a row was removed."""
+        if not user_id or not profile_id or not bookmark_id:
+            raise ValueError("user_id, profile_id, bookmark_id required")
+        assert self._db is not None
+        cursor = await self._db.execute(
+            "DELETE FROM bookmarks "
+            "WHERE user_id = ? AND profile_id = ? AND bookmark_id = ?",
+            (user_id, profile_id, bookmark_id),
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def find_bookmark_by_url(
+        self,
+        *,
+        user_id: str,
+        profile_id: str,
+        url: str,
+    ) -> dict | None:
+        """Returns matching bookmark or None."""
+        if not user_id or not profile_id or not url:
+            raise ValueError("user_id, profile_id, url required")
+        assert self._db is not None
+        cursor = await self._db.execute(
+            "SELECT bookmark_id, url, title, created_at "
+            "FROM bookmarks "
+            "WHERE user_id = ? AND profile_id = ? AND url = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (user_id, profile_id, url),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "bookmark_id": row[0],
+            "url": row[1],
+            "title": row[2],
+            "created_at": row[3],
+        }
+
     # ------------------------------------------------------------------
     # Agent pin helpers
     # ------------------------------------------------------------------
@@ -788,6 +894,145 @@ class BrowserStore(BaseStore):
                 return True
 
         return False
+
+
+    # ------------------------------------------------------------------
+    # Site permission helpers
+    # ------------------------------------------------------------------
+
+    async def set_site_permission(
+        self,
+        *,
+        user_id: str,
+        profile_id: str,
+        host_pattern: str,
+        permission: str,
+        state: str,
+    ) -> None:
+        """UPSERT a site permission. state must be 'allow' or 'deny'."""
+        if not user_id:
+            raise ValueError("user_id is required")
+        if not profile_id:
+            raise ValueError("profile_id is required")
+        if not host_pattern:
+            raise ValueError("host_pattern is required")
+        if not permission:
+            raise ValueError("permission is required")
+        if permission not in _KNOWN_SITE_PERMISSIONS:
+            raise ValueError(f"unknown permission: {permission}")
+        if state not in {"allow", "deny"}:
+            raise ValueError("state must be 'allow' or 'deny'")
+        assert self._db is not None
+        granted_at = datetime.now(timezone.utc).isoformat()
+        await self._db.execute(
+            "INSERT OR REPLACE INTO site_permissions "
+            "(user_id, profile_id, host_pattern, permission, state, granted_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, profile_id, host_pattern, permission, state, granted_at),
+        )
+        await self._db.commit()
+
+    async def list_site_permissions(
+        self,
+        *,
+        user_id: str,
+        profile_id: str,
+    ) -> list[dict]:
+        """Returns list of {host_pattern, permission, state, granted_at}."""
+        if not user_id:
+            raise ValueError("user_id is required")
+        if not profile_id:
+            raise ValueError("profile_id is required")
+        assert self._db is not None
+        cursor = await self._db.execute(
+            "SELECT host_pattern, permission, state, granted_at "
+            "FROM site_permissions "
+            "WHERE user_id = ? AND profile_id = ? "
+            "ORDER BY granted_at",
+            (user_id, profile_id),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "host_pattern": r[0],
+                "permission": r[1],
+                "state": r[2],
+                "granted_at": r[3],
+            }
+            for r in rows
+        ]
+
+    async def remove_site_permission(
+        self,
+        *,
+        user_id: str,
+        profile_id: str,
+        host_pattern: str,
+        permission: str,
+    ) -> bool:
+        """DELETE a permission grant. Returns True if removed."""
+        if not user_id:
+            raise ValueError("user_id is required")
+        if not profile_id:
+            raise ValueError("profile_id is required")
+        if not host_pattern:
+            raise ValueError("host_pattern is required")
+        if not permission:
+            raise ValueError("permission is required")
+        assert self._db is not None
+        cursor = await self._db.execute(
+            "DELETE FROM site_permissions "
+            "WHERE user_id = ? AND profile_id = ? "
+            "  AND host_pattern = ? AND permission = ?",
+            (user_id, profile_id, host_pattern, permission),
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def check_site_permission(
+        self,
+        *,
+        user_id: str,
+        profile_id: str,
+        host: str,
+        permission: str,
+    ) -> str | None:
+        """Returns 'allow', 'deny', or None (no grant).
+
+        Pattern semantics (same as check_capability):
+          - "*"            matches any host
+          - "*.example.com" matches "example.com" and "foo.example.com"
+          - anything else: exact match
+
+        When multiple patterns match, the most specific wins:
+          exact (2) > subdomain wildcard (1) > global wildcard (0)
+        """
+        rows = await self.list_site_permissions(user_id=user_id, profile_id=profile_id)
+        best_score = -1
+        best_state: str | None = None
+        for row in rows:
+            if row["permission"] != permission:
+                continue
+            pattern = row["host_pattern"]
+            score = -1
+            if pattern == host:
+                score = 2
+            elif pattern.startswith("*."):
+                domain = pattern[2:]
+                if host == domain or host.endswith("." + domain):
+                    score = 1
+            elif pattern == "*":
+                score = 0
+            if score > best_score:
+                best_score = score
+                best_state = row["state"]
+        return best_state
+
+
+_KNOWN_SITE_PERMISSIONS = {
+    "notifications", "clipboard-read", "clipboard-write",
+    "geolocation", "camera", "microphone",
+}
 
 
 class BrowserCookieStore:

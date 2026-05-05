@@ -104,6 +104,16 @@ CREATE TABLE IF NOT EXISTS drive_sessions (
   last_op_at     TEXT NOT NULL,
   PRIMARY KEY (user_id, profile_id, tab_id, agent_id)
 );
+
+CREATE TABLE IF NOT EXISTS site_permissions (
+  user_id        TEXT NOT NULL,
+  profile_id     TEXT NOT NULL,
+  host_pattern   TEXT NOT NULL,
+  permission     TEXT NOT NULL,
+  state          TEXT NOT NULL,
+  granted_at     TEXT NOT NULL,
+  PRIMARY KEY (user_id, profile_id, host_pattern, permission)
+);
 """
 
 

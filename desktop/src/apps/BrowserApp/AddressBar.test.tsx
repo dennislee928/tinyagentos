@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import { AddressBar, READER_MIN_WORD_COUNT } from "./AddressBar";
 import { useBrowserStore } from "@/stores/browser-store";
 import * as extractApi from "@/lib/browser-extract-api";
+import * as bookmarksApi from "@/lib/browser-bookmarks-api";
 
 const TEST_WINDOW_ID = "win-test";
 const originalFetch = global.fetch;
@@ -121,6 +122,9 @@ describe("AddressBar — suggest popover", () => {
   });
 
   it("@-prefixed query does NOT fire suggest fetch (PR 4 stub)", async () => {
+    // Intercept the bookmark mount-fetch so it doesn't interfere with the
+    // suggest-fetch assertion below.
+    vi.spyOn(bookmarksApi, "listBookmarks").mockResolvedValue([]);
     const fetchMock = vi.fn();
     global.fetch = fetchMock;
 
@@ -313,5 +317,148 @@ describe("AddressBar — reader toggle", () => {
 
     await new Promise((r) => setTimeout(r, 50));
     expect(extractSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("AddressBar — bookmark star button", () => {
+  beforeEach(() => {
+    vi.spyOn(bookmarksApi, "listBookmarks").mockResolvedValue([]);
+    vi.spyOn(bookmarksApi, "addBookmark").mockResolvedValue("bm-new");
+    vi.spyOn(bookmarksApi, "removeBookmark").mockResolvedValue(true);
+  });
+
+  it("renders star button for a real URL (not about:blank)", async () => {
+    const tabId = useBrowserStore.getState().getWindow(TEST_WINDOW_ID)!.tabs[0].id;
+    useBrowserStore.getState().navigateTab(TEST_WINDOW_ID, tabId, "https://a.test/");
+
+    render(<AddressBar windowId={TEST_WINDOW_ID} />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /add bookmark|remove bookmark/i })).toBeInTheDocument(),
+    );
+  });
+
+  it("does NOT render star button for about:blank", async () => {
+    // Default tab URL is about:blank
+    render(<AddressBar windowId={TEST_WINDOW_ID} />);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole("button", { name: /add bookmark|remove bookmark/i })).toBeNull();
+  });
+
+  it("star has aria-pressed=false when not bookmarked", async () => {
+    const tabId = useBrowserStore.getState().getWindow(TEST_WINDOW_ID)!.tabs[0].id;
+    useBrowserStore.getState().navigateTab(TEST_WINDOW_ID, tabId, "https://a.test/");
+
+    render(<AddressBar windowId={TEST_WINDOW_ID} />);
+    const btn = await screen.findByRole("button", { name: /add bookmark/i });
+    expect(btn).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("clicking star calls addBookmark and sets aria-pressed=true", async () => {
+    const tabId = useBrowserStore.getState().getWindow(TEST_WINDOW_ID)!.tabs[0].id;
+    useBrowserStore.getState().navigateTab(TEST_WINDOW_ID, tabId, "https://a.test/");
+
+    render(<AddressBar windowId={TEST_WINDOW_ID} />);
+    const btn = await screen.findByRole("button", { name: /add bookmark/i });
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    expect(bookmarksApi.addBookmark).toHaveBeenCalledWith(
+      "personal",
+      "https://a.test/",
+      expect.any(String),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /remove bookmark/i })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      ),
+    );
+  });
+
+  it("rapid double-click only fires one addBookmark call (single-flight)", async () => {
+    const tabId = useBrowserStore.getState().getWindow(TEST_WINDOW_ID)!.tabs[0].id;
+    useBrowserStore.getState().navigateTab(TEST_WINDOW_ID, tabId, "https://a.test/");
+
+    // Make addBookmark slow enough that the second click arrives before the first resolves
+    let resolveAdd!: (id: string) => void;
+    vi.spyOn(bookmarksApi, "addBookmark").mockReturnValue(
+      new Promise<string>((res) => { resolveAdd = res; }),
+    );
+
+    render(<AddressBar windowId={TEST_WINDOW_ID} />);
+    const btn = await screen.findByRole("button", { name: /add bookmark/i });
+
+    // Two rapid clicks
+    await act(async () => { fireEvent.click(btn); });
+    await act(async () => { fireEvent.click(btn); });
+
+    // Resolve the pending add
+    await act(async () => { resolveAdd("bm-1"); });
+
+    expect(bookmarksApi.addBookmark).toHaveBeenCalledTimes(1);
+  });
+
+  it("profile switch clears stale bookmarks and repopulates", async () => {
+    const tabId = useBrowserStore.getState().getWindow(TEST_WINDOW_ID)!.tabs[0].id;
+    useBrowserStore.getState().navigateTab(TEST_WINDOW_ID, tabId, "https://a.test/");
+
+    // First profile has the page bookmarked
+    vi.spyOn(bookmarksApi, "listBookmarks").mockResolvedValueOnce([
+      { bookmark_id: "bm-profile1", url: "https://a.test/", title: "A", created_at: 1000 },
+    ]);
+
+    render(<AddressBar windowId={TEST_WINDOW_ID} />);
+
+    // Star should be active (bookmarked) for profile "personal"
+    const btn = await screen.findByRole("button", { name: /remove bookmark/i });
+    expect(btn).toHaveAttribute("aria-pressed", "true");
+
+    // Now switch to a profile that has NO bookmarks
+    vi.spyOn(bookmarksApi, "listBookmarks").mockResolvedValue([]);
+    await act(async () => {
+      useBrowserStore.getState().windows[TEST_WINDOW_ID]!.profileId = "work";
+      // Trigger a re-render by updating state
+      useBrowserStore.setState((s) => ({
+        windows: {
+          ...s.windows,
+          [TEST_WINDOW_ID]: { ...s.windows[TEST_WINDOW_ID]!, profileId: "work" },
+        },
+      }));
+    });
+
+    // Star should now be inactive (not bookmarked) for profile "work"
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /add bookmark/i })).toHaveAttribute(
+        "aria-pressed",
+        "false",
+      ),
+    );
+  });
+
+  it("clicking star again calls removeBookmark and sets aria-pressed=false", async () => {
+    vi.spyOn(bookmarksApi, "listBookmarks").mockResolvedValue([
+      { bookmark_id: "bm-existing", url: "https://a.test/", title: "A", created_at: 1000 },
+    ]);
+
+    const tabId = useBrowserStore.getState().getWindow(TEST_WINDOW_ID)!.tabs[0].id;
+    useBrowserStore.getState().navigateTab(TEST_WINDOW_ID, tabId, "https://a.test/");
+
+    render(<AddressBar windowId={TEST_WINDOW_ID} />);
+    const btn = await screen.findByRole("button", { name: /remove bookmark/i });
+    expect(btn).toHaveAttribute("aria-pressed", "true");
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    expect(bookmarksApi.removeBookmark).toHaveBeenCalledWith("personal", "bm-existing");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /add bookmark/i })).toHaveAttribute(
+        "aria-pressed",
+        "false",
+      ),
+    );
   });
 });
