@@ -56,6 +56,7 @@ tinyagentos = "tinyagentos.app:main"
 tinyagentos-worker = "tinyagentos.worker.__main__:main"
 taos = "tinyagentos.app:main"
 taos-gui = "tinyagentos.app:gui"
+taos-worker-ctl = "tinyagentos.cli.worker:main"
 
 [tool.pytest.ini_options]
 markers = [
