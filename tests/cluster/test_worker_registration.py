@@ -86,3 +86,25 @@ class TestClusterManagerGetWorker:
         asyncio.run(mgr.register_worker(w))
         found = mgr.get_worker("local")
         assert found.signing_key == key
+
+
+@pytest.mark.asyncio
+async def test_worker_register_accepts_lxc_capacity_fields(client):
+    payload = {
+        "name": "test-worker-lxc-fields",
+        "url": "http://192.168.1.50:6970",
+        "host_lan_ip": "192.168.1.50",
+        "storage_cap_bytes": 500_000_000_000,
+        "storage_used_bytes": 12_345_678,
+        "bytes_deduped_total": 0,
+        "worker_lxc_image_version": "ubuntu/24.04/amd64",
+    }
+    resp = await client.post("/api/cluster/workers", json=payload)
+    assert resp.status_code == 200
+    workers = (await client.get("/api/cluster/workers")).json()
+    me = next(w for w in workers if w["name"] == "test-worker-lxc-fields")
+    assert me["host_lan_ip"] == "192.168.1.50"
+    assert me["storage_cap_bytes"] == 500_000_000_000
+    assert me["storage_used_bytes"] == 12_345_678
+    assert me["bytes_deduped_total"] == 0
+    assert me["worker_lxc_image_version"] == "ubuntu/24.04/amd64"

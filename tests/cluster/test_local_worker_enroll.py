@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -125,3 +126,56 @@ class TestWorkerRegistryBridge:
             assert result["name"] == "local"
         finally:
             wr._active_manager = original
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_includes_capacity_snapshot(monkeypatch):
+    """WorkerAgent.heartbeat() should call capacity_snapshot() and
+    include the three byte counters in the POST body.
+    """
+    from tinyagentos.worker.agent import WorkerAgent
+
+    posted_bodies = []
+
+    # Fake httpx.AsyncClient that captures the POST body
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    async def fake_post(url, json=None, **kwargs):
+        posted_bodies.append(json or {})
+        return mock_response
+
+    mock_client.post = fake_post
+
+    monkeypatch.setattr(
+        "tinyagentos.worker.agent.httpx.AsyncClient",
+        lambda **kw: mock_client,
+    )
+    monkeypatch.setattr(
+        "tinyagentos.worker.agent.psutil.cpu_percent",
+        lambda: 0.0,
+    )
+    monkeypatch.setattr(
+        "tinyagentos.cluster.worker_capacity.capacity_snapshot",
+        lambda **kw: {
+            "storage_cap_bytes": 10**12,
+            "storage_used_bytes": 10**11,
+            "bytes_deduped_total": 5 * 10**9,
+        },
+    )
+
+    agent = WorkerAgent("http://controller:6969", name="test-worker")
+    # detect_backends makes outgoing network calls — short-circuit it
+    monkeypatch.setattr(agent, "detect_backends", AsyncMock(return_value=[]))
+
+    await agent.heartbeat()
+
+    assert len(posted_bodies) == 1
+    body = posted_bodies[0]
+    assert body["storage_cap_bytes"] == 10**12
+    assert body["storage_used_bytes"] == 10**11
+    assert body["bytes_deduped_total"] == 5 * 10**9

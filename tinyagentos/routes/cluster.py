@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import subprocess
 from dataclasses import asdict
 
 from fastapi import APIRouter, Request
@@ -30,6 +32,12 @@ class WorkerRegister(BaseModel):
     kv_cache_quant_k_support: list[str] = ["fp16"]
     kv_cache_quant_v_support: list[str] = ["fp16"]
     kv_cache_quant_boundary_layer_protect: bool = False
+    # LXC capacity fields — absent from legacy flat-mode workers, safe defaults.
+    host_lan_ip: str | None = None
+    storage_cap_bytes: int = 0
+    storage_used_bytes: int = 0
+    bytes_deduped_total: int = 0
+    worker_lxc_image_version: str | None = None
 
 
 class HeartbeatBody(BaseModel):
@@ -47,6 +55,11 @@ class HeartbeatBody(BaseModel):
     kv_cache_quant_k_support: list[str] | None = None
     kv_cache_quant_v_support: list[str] | None = None
     kv_cache_quant_boundary_layer_protect: bool | None = None
+    # LXC byte counters — optional so legacy workers that don't send them
+    # leave the stored values unchanged (Task 4 wires these through).
+    storage_cap_bytes: int | None = None
+    storage_used_bytes: int | None = None
+    bytes_deduped_total: int | None = None
 
 
 class RouteRequest(BaseModel):
@@ -94,6 +107,13 @@ async def register_worker(request: Request, body: WorkerRegister):
     cluster = request.app.state.cluster_manager
     if not body.name or not body.url:
         return JSONResponse({"error": "name and url are required"}, status_code=400)
+    if body.host_lan_ip:
+        existing = cluster.find_worker_by_host_lan_ip(body.host_lan_ip)
+        if existing is not None and existing.name != body.name:
+            return JSONResponse(
+                {"error": f"Worker '{existing.name}' already registered for host {body.host_lan_ip}; only one worker LXC per host is supported"},
+                status_code=409,
+            )
     info = WorkerInfo(
         name=body.name,
         url=body.url,
@@ -106,6 +126,11 @@ async def register_worker(request: Request, body: WorkerRegister):
         kv_cache_quant_k_support=body.kv_cache_quant_k_support,
         kv_cache_quant_v_support=body.kv_cache_quant_v_support,
         kv_cache_quant_boundary_layer_protect=body.kv_cache_quant_boundary_layer_protect,
+        host_lan_ip=body.host_lan_ip,
+        storage_cap_bytes=body.storage_cap_bytes,
+        storage_used_bytes=body.storage_used_bytes,
+        bytes_deduped_total=body.bytes_deduped_total,
+        worker_lxc_image_version=body.worker_lxc_image_version,
     )
     await cluster.register_worker(info)
     return {"status": "registered", "name": body.name}
@@ -327,6 +352,38 @@ async def incus_enroll(request: Request, name: str, body: IncusEnrollRequest):
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
 
     if result["success"]:
+        # Verify the worker LXC was launched with security.privileged=true and
+        # security.nesting=true. If either is missing, mark the worker as
+        # degraded so the cluster UI surfaces the warning. Don't fail the enroll
+        # itself — registration is already complete.
+        try:
+            info_proc = await asyncio.to_thread(
+                subprocess.run,
+                ["incus", "info", "taos-worker", "--remote", name],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if info_proc.returncode == 0:
+                privileged = "security.privileged: \"true\"" in info_proc.stdout
+                nesting = "security.nesting: \"true\"" in info_proc.stdout
+                if not (privileged and nesting):
+                    worker.degraded = True
+                    missing = []
+                    if not privileged:
+                        missing.append("security.privileged=true")
+                    if not nesting:
+                        missing.append("security.nesting=true")
+                    worker.degraded_reason = (
+                        f"worker LXC missing {', '.join(missing)}; "
+                        "nested incus operations may fail"
+                    )
+                    logger.warning("worker %s degraded: %s", name, worker.degraded_reason)
+            # If incus info fails (returncode != 0), don't flag — could just be that
+            # the worker is at incus-only state without the LXC yet (during initial
+            # enrollment). Worth a debug log only.
+        except Exception as exc:
+            logger.warning("could not verify worker LXC privilege for %s: %s", name, exc)
         return {"ok": True}
     return JSONResponse({"ok": False, "error": result["output"]}, status_code=500)
 
