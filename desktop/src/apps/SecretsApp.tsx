@@ -201,8 +201,16 @@ export function SecretsApp({ windowId: _windowId }: { windowId: string }) {
   });
 
   const fetchSecrets = useCallback(async () => {
+    // 10s timeout via AbortController so a hung backend never leaves the
+    // panel stuck on "Loading..." forever. On timeout/abort we fall through
+    // to the empty state.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
     try {
-      const res = await fetch("/api/secrets", { headers: { Accept: "application/json" } });
+      const res = await fetch("/api/secrets", {
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
       if (res.ok) {
         const ct = res.headers.get("content-type") ?? "";
         if (ct.includes("application/json")) {
@@ -223,6 +231,9 @@ export function SecretsApp({ windowId: _windowId }: { windowId: string }) {
         }
       }
     } catch { /* fall through */ }
+    finally {
+      clearTimeout(timer);
+    }
     // Empty state — no mock secrets for security reasons
     setSecrets([]);
     setLoading(false);

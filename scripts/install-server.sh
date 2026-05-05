@@ -404,8 +404,41 @@ if [[ -z "${TAOS_SKIP_QMD:-}" ]]; then
             # (errno -2).  --unsafe-perm keeps npm running as root throughout,
             # which is the historical behaviour and the only thing that works
             # for native-binding packages on a system-global install.
-            sudo HOME=/root npm install -g --unsafe-perm "@jaylfc/qmd" \
-                || die "npm install of qmd failed — cannot continue (qmd.service would never start)"
+            # Pre-clean a partial qmd install dir before we try again.
+            # If a prior run failed mid-extraction, the leftover directory
+            # makes npm's tar extractor stumble on a second attempt with
+            # ENOENT errors that look like a fresh failure but are really
+            # just unfinished cleanup.
+            npm_prefix=$(npm config get prefix 2>/dev/null || echo "/usr")
+            partial_qmd="${npm_prefix}/lib/node_modules/@jaylfc/qmd"
+            if [[ -d "$partial_qmd" ]] && ! command -v qmd >/dev/null 2>&1; then
+                log "removing partial qmd install at $partial_qmd before retry"
+                sudo rm -rf "$partial_qmd"
+            fi
+
+            # Capture npm stderr so we can diagnose the failure class.
+            # The TAR_ENTRY_ERROR / "spawn sh ENOENT" combo is the canonical
+            # node-llama-cpp tar-extraction failure (issue #310). When we
+            # see it, point the user at the partial-install path and the log
+            # rather than dumping hundreds of lines of npm noise to stderr.
+            qmd_install_log=$(mktemp /tmp/taos-qmd-install.XXXXXX.log)
+            log "npm install -g @jaylfc/qmd (log: $qmd_install_log)"
+            if ! sudo HOME=/root npm install -g --unsafe-perm "@jaylfc/qmd" >"$qmd_install_log" 2>&1; then
+                if grep -q "TAR_ENTRY_ERROR" "$qmd_install_log" \
+                   && grep -q "spawn sh" "$qmd_install_log"; then
+                    warn "npm install of qmd hit the node-llama-cpp tar-extraction"
+                    warn "failure mode (issue #310). Recovery:"
+                    warn "  1. sudo rm -rf $partial_qmd"
+                    warn "  2. Re-run install-server.sh"
+                    warn "  3. If it still fails, share $qmd_install_log on issue #2"
+                    warn "Do NOT run 'npm install -g npm@<newer>' as recovery — it can"
+                    warn "hit the same failure mode against npm's own tarball and leave"
+                    warn "your npm in a broken state requiring a full nodejs reinstall."
+                fi
+                tail -20 "$qmd_install_log" >&2
+                die "npm install of qmd failed — see $qmd_install_log"
+            fi
+            rm -f "$qmd_install_log"
             # Confirm the binary is reachable before we proceed.
             if ! command -v qmd >/dev/null 2>&1; then
                 die "qmd binary not found on PATH after npm install — check npm global prefix and PATH"
