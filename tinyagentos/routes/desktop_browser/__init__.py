@@ -21,3 +21,4 @@ from tinyagentos.routes.desktop_browser import copilot_ws as _copilot_ws  # noqa
 from tinyagentos.routes.desktop_browser import copilot_agent_ws as _copilot_agent_ws  # noqa: E402,F401
 from tinyagentos.routes.desktop_browser import capability_routes as _capability_routes  # noqa: E402,F401
 from tinyagentos.routes.desktop_browser import bookmark_routes as _bookmark_routes  # noqa: E402,F401
+from tinyagentos.routes.desktop_browser import site_permission_routes as _site_permission_routes  # noqa: E402,F401
