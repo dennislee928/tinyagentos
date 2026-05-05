@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urljoin, urlparse, urlsplit
@@ -34,6 +35,7 @@ from tinyagentos.routes.desktop_browser.cookie_jar import (
     persist_response_cookies,
 )
 from tinyagentos.routes.desktop_browser.csp import proxied_response_csp
+from tinyagentos.routes.desktop_browser.extract import extract_readable
 from tinyagentos.routes.desktop_browser.injector import inject_into_head
 from tinyagentos.routes.desktop_browser.profile import (
     ProfileNotFoundError,
@@ -68,6 +70,7 @@ async def proxy_get(
     profile_id: str,
     url: str,
     request: Request,
+    tab_id: str | None = None,
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     """Real proxy fetch — replaces PR 2's 501 stub."""
@@ -210,6 +213,36 @@ async def proxy_get(
         )
         injected = inject_into_head(rewritten, ws_url=ws_url)
 
+        # Page-change broadcast for any agents pinned to this tab.
+        # Non-blocking — never delay the user's page load on agent fan-out.
+        if tab_id:
+            extract_text = ""
+            extract_title = ""
+            try:
+                # Extract from RAW upstream HTML, not the rewritten body — the
+                # agent's context should reference original URLs, not proxied ones.
+                extract_result = extract_readable(response.content, url)
+                extract_text = (extract_result.get("text") or "")[:4000]
+                extract_title = extract_result.get("title", "")
+            except Exception:
+                # Extraction failure is non-fatal — page-changed still fires
+                pass
+
+            asyncio.create_task(
+                request.app.state.copilot_hub.push_event_to_pinned(
+                    user_id=user_id,
+                    profile_id=profile_id,
+                    tab_id=tab_id,
+                    event={
+                        "event": "page-changed",
+                        "url": url,
+                        "title": extract_title,
+                        "extract": extract_text,
+                        "timestamp": time.time(),
+                    },
+                )
+            )
+
         out_headers["content-security-policy"] = proxied_response_csp()
         return Response(
             content=injected,
@@ -233,4 +266,8 @@ _COPILOT_JS = Path(__file__).parent / "copilot.js"
 
 @router.get("/__taos/copilot.js")
 async def copilot_js():
-    return FileResponse(_COPILOT_JS, media_type="application/javascript")
+    return FileResponse(
+        _COPILOT_JS,
+        media_type="application/javascript",
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
+    )

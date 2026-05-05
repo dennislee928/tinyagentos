@@ -17,11 +17,17 @@
  * with playing audio/video, active form input, or in-flight upload
  * are exempt regardless of idle time. PR 4 ships the basic policy.
  */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useBrowserStore } from "@/stores/browser-store";
 import { useBrowserSettingsStore } from "@/stores/browser-settings-store";
+import { useBrowserAgentStore } from "@/stores/browser-agent-store";
+import { mintCopilotTicket } from "@/lib/browser-agent-api";
+import { openParentWs } from "./agent-ws-bridge";
+import type { AgentWsHandle } from "./agent-ws-bridge";
 import { detectLiveExclusion } from "./live-exclusion";
 import { ReaderMode } from "./ReaderMode";
+import { AgentPanel } from "./AgentPanel";
+import { PageContextMenu } from "./PageContextMenu";
 import type { Tab } from "./types";
 
 export const DISCARD_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -34,7 +40,6 @@ interface TabRendererProps {
 
 export function TabRenderer({ windowId }: TabRendererProps) {
   const win = useBrowserStore((s) => s.windows[windowId]);
-  const markTabDiscarded = useBrowserStore((s) => s.markTabDiscarded);
   const markTabLive = useBrowserStore((s) => s.markTabLive);
 
   // Discard scheduler — ticks every 60s while the window is mounted.
@@ -87,10 +92,9 @@ export function TabRenderer({ windowId }: TabRendererProps) {
           )
           .sort((a, b) => a.lastActiveAt - b.lastActiveAt);
         for (let i = 0; i < overflowCount && i < candidates.length; i++) {
-          useBrowserStore.getState().markTabDiscarded(
-            windowId,
-            candidates[i].id,
-          );
+          const candidate = candidates[i];
+          if (!candidate) continue;
+          useBrowserStore.getState().markTabDiscarded(windowId, candidate.id);
         }
       }
     }, SCHEDULER_INTERVAL_MS);
@@ -99,58 +103,184 @@ export function TabRenderer({ windowId }: TabRendererProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [windowId, !!win]);
 
+  // WS lifecycle — for each pinned agent on the active tab:
+  //   1. Mint an iframe ticket and postMessage taos-copilot:open to the iframe.
+  //      copilot.js opens the WS and forwards server events back to the parent
+  //      via postMessage.
+  //   2. Register a parent-side message listener via openParentWs so we
+  //      receive forwarded page-changed events and bump the presence pulse.
+  // We do NOT open a second parent WebSocket — both connections would register
+  // under the same hub key and clobber each other.
+  const activeTabIdForEffect = win?.activeTabId;
+  const pinnedAgentIdsForEffect = win?.tabs.find((t) => t.id === win?.activeTabId)?.pinnedAgentIds ?? [];
+  const profileIdForEffect = win?.profileId;
+
+  useEffect(() => {
+    if (!activeTabIdForEffect || !profileIdForEffect) return;
+
+    const tabId = activeTabIdForEffect;
+    const profileId = profileIdForEffect;
+    const iframe = document.querySelector(
+      `iframe[data-tab-id="${tabId}"]`,
+    ) as HTMLIFrameElement | null;
+    if (!iframe) return;
+
+    const handles: AgentWsHandle[] = [];
+    let cancelled = false;
+
+    for (const agentId of pinnedAgentIdsForEffect) {
+      // 1. Mint a ticket for the iframe-side WS and post it.
+      mintCopilotTicket(profileId, tabId, agentId).then((ticket) => {
+        if (cancelled || !ticket) return;
+        if (iframe.contentWindow) {
+          iframe.contentWindow.postMessage(
+            { type: "taos-copilot:open", ticket: ticket.ticket, agentId },
+            "*",
+          );
+        }
+      });
+
+      // 2. Register a parent-side listener for events forwarded by copilot.js.
+      const handle = openParentWs({
+        windowId,
+        tabId,
+        agentId,
+        iframe,
+        onEvent: (event) => {
+          const store = useBrowserAgentStore.getState();
+          store.bumpEventAt(windowId, tabId, agentId);
+          store.appendEvent(windowId, tabId, agentId, event);
+        },
+      });
+      handles.push(handle);
+    }
+
+    return () => {
+      cancelled = true;
+
+      // Close all parent-side listeners
+      for (const handle of handles) handle.close();
+
+      // Tell the iframe-side copilot.js to close its WS for each agent
+      if (iframe.contentWindow) {
+        for (const agentId of pinnedAgentIdsForEffect) {
+          iframe.contentWindow.postMessage(
+            { type: "taos-copilot:close", agentId },
+            "*",
+          );
+        }
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windowId, activeTabIdForEffect, pinnedAgentIdsForEffect.join(","), profileIdForEffect]);
+
+  // Subscribe to panel state so TabRenderer re-renders when panel opens/closes.
+  // win?.activeTabId is safely undefined when win is undefined (hook must be
+  // called unconditionally, so the guard comes after).
+  const panelIsOpen =
+    useBrowserAgentStore(
+      (s) => (win ? s.panels[`${windowId}:${win.activeTabId}`]?.isOpen : false),
+    ) ?? false;
+
+  // Context menu state — position where the user right-clicked.
+  // PR 6 limitation: only fires when right-clicking on the iframe wrapper border,
+  // not on the iframe content itself (sandbox blocks contextmenu propagation to
+  // the parent). PR 7 will add copilot.js → parent postMessage forwarding so
+  // right-click anywhere on the page surface reaches this handler.
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
   if (!win) return null;
 
+  const activeTab = win.tabs.find((t) => t.id === win.activeTabId);
+  const pinnedAgentIds = activeTab?.pinnedAgentIds ?? [];
+
   return (
-    <div className="relative flex-1 bg-shell-bg-deep overflow-hidden">
-      {win.tabs.map((tab) => {
-        const isActive = tab.id === win.activeTabId;
-        if (tab.state === "discarded") {
-          return isActive ? (
-            <DiscardedPlaceholder
+    <div className="flex flex-1 overflow-hidden bg-shell-bg-deep">
+      {/* Iframe pool — relative container so iframes can position absolutely */}
+      <div
+        className="relative flex-1 overflow-hidden"
+        onContextMenu={(e) => {
+          // Right-click on the iframe wrapper. See comment above for PR 6 limitation.
+          e.preventDefault();
+          if (activeTab) {
+            setContextMenu({ x: e.clientX, y: e.clientY });
+          }
+        }}
+      >
+        {win.tabs.map((tab) => {
+          const isActive = tab.id === win.activeTabId;
+          if (tab.state === "discarded") {
+            return isActive ? (
+              <DiscardedPlaceholder
+                key={tab.id}
+                tab={tab}
+                onReload={() => markTabLive(windowId, tab.id)}
+              />
+            ) : null;
+          }
+
+          const showReader = isActive && !!tab.readerActive && !!tab.readerExtract;
+
+          return (
+            <div
               key={tab.id}
-              tab={tab}
-              onReload={() => markTabLive(windowId, tab.id)}
-            />
-          ) : null;
-        }
+              style={{ display: isActive ? "contents" : "none" }}
+              data-window-tab={tab.id}
+            >
+              <iframe
+                title={tab.title || tab.url || "Browser tab"}
+                src={proxiedSrc(win.profileId, tab.url, tab.id)}
+                data-tab-id={tab.id}
+                // sandbox: allow-same-origin intentionally OMITTED. The proxy
+                // serves on the same origin as the shell; combining
+                // allow-same-origin + allow-scripts would let proxied JS reach
+                // up into the parent and remove this attribute. The HTTPS+DNS
+                // Foundations brainstorm will land an isolated subdomain that
+                // makes allow-same-origin safe to add back.
+                sandbox="allow-scripts allow-forms allow-popups allow-downloads"
+                style={{
+                  display: isActive && !showReader ? "block" : "none",
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  border: "none",
+                  transform: tab.zoom !== 1 ? `scale(${tab.zoom})` : undefined,
+                  transformOrigin: "top left",
+                }}
+              />
+              {showReader && (
+                <ReaderMode tab={tab} windowId={windowId} />
+              )}
+            </div>
+          );
+        })}
 
-        const showReader = isActive && !!tab.readerActive && !!tab.readerExtract;
+        {/* Page context menu — shown when user right-clicks the iframe wrapper */}
+        {contextMenu && activeTab && (
+          <PageContextMenu
+            windowId={windowId}
+            tabId={activeTab.id}
+            profileId={win.profileId}
+            url={activeTab.url}
+            title={activeTab.title || activeTab.url || ""}
+            selection={null}
+            x={contextMenu.x}
+            y={contextMenu.y}
+            onClose={() => setContextMenu(null)}
+          />
+        )}
+      </div>
 
-        return (
-          <div
-            key={tab.id}
-            style={{ display: isActive ? "contents" : "none" }}
-            data-window-tab={tab.id}
-          >
-            <iframe
-              title={tab.title || tab.url || "Browser tab"}
-              src={proxiedSrc(win.profileId, tab.url)}
-              data-tab-id={tab.id}
-              // sandbox: allow-same-origin intentionally OMITTED. The proxy
-              // serves on the same origin as the shell; combining
-              // allow-same-origin + allow-scripts would let proxied JS reach
-              // up into the parent and remove this attribute. The HTTPS+DNS
-              // Foundations brainstorm will land an isolated subdomain that
-              // makes allow-same-origin safe to add back.
-              sandbox="allow-scripts allow-forms allow-popups allow-downloads"
-              style={{
-                display: isActive && !showReader ? "block" : "none",
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                border: "none",
-                transform: tab.zoom !== 1 ? `scale(${tab.zoom})` : undefined,
-                transformOrigin: "top left",
-              }}
-            />
-            {showReader && (
-              <ReaderMode tab={tab} windowId={windowId} />
-            )}
-          </div>
-        );
-      })}
+      {/* Agent panel — renders to the right of the iframe; iframe squeezes via flex */}
+      {panelIsOpen && pinnedAgentIds.length > 0 && (
+        <AgentPanel
+          windowId={windowId}
+          tabId={win.activeTabId}
+          profileId={win.profileId}
+          pinnedAgentIds={pinnedAgentIds}
+        />
+      )}
     </div>
   );
 }
@@ -183,11 +313,18 @@ function DiscardedPlaceholder({ tab, onReload }: DiscardedPlaceholderProps) {
   );
 }
 
-/** Build the proxied iframe src. about:blank passes through unproxied. */
-function proxiedSrc(profileId: string, url: string): string {
+/** Build the proxied iframe src. about:blank passes through unproxied.
+ * tab_id is included so the proxy can fan out page-changed events to
+ * any agents pinned to the tab (see proxy.py + CopilotHub).
+ */
+function proxiedSrc(profileId: string, url: string, tabId: string): string {
   if (!url || url === "about:blank" || url.startsWith("about:")) {
     return "about:blank";
   }
-  const params = new URLSearchParams({ profile_id: profileId, url });
+  const params = new URLSearchParams({
+    profile_id: profileId,
+    url,
+    tab_id: tabId,
+  });
   return `/api/desktop/browser/proxy?${params.toString()}`;
 }

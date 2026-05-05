@@ -8,13 +8,15 @@
  * `desktop/src/components/Window.tsx` — every window in taOS gets them
  * automatically. This component does NOT render its own traffic lights.
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ArrowLeft, ArrowRight, RotateCw, Settings } from "lucide-react";
 import { useBrowserStore } from "@/stores/browser-store";
 import { listProfiles, type Profile } from "@/lib/browser-profile-api";
 import { ProfileSwitcher } from "./ProfileSwitcher";
 import { ProfileManager } from "./ProfileManager";
 import { SettingsPanel } from "./SettingsPanel";
+import { AgentPickerPopover } from "./AgentPickerPopover";
+import { AgentPresencePill } from "./AgentPresencePill";
 
 interface ChromeProps {
   windowId: string;
@@ -29,7 +31,9 @@ export function Chrome({ windowId }: ChromeProps) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
+  const agentChipRef = useRef<HTMLButtonElement>(null);
 
   const currentProfileId = win?.profileId ?? "";
 
@@ -40,6 +44,20 @@ export function Chrome({ windowId }: ChromeProps) {
     });
     return () => { cancelled = true; };
   }, [currentProfileId]);
+
+  // Cmd+Shift+A keyboard shortcut → open agent picker
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ windowId: string }>;
+      if (ce.detail?.windowId !== windowId) return;
+      setSettingsOpen(false);
+      setSwitcherOpen(false);
+      setManagerOpen(false);
+      setPickerOpen(true);
+    };
+    window.addEventListener("taos-browser:open-agent-picker", handler);
+    return () => window.removeEventListener("taos-browser:open-agent-picker", handler);
+  }, [windowId]);
 
   if (!win) return null;
 
@@ -96,6 +114,53 @@ export function Chrome({ windowId }: ChromeProps) {
       {/* Spacer pushes the profile chip to the right */}
       <div className="flex-1" />
 
+      {/* Agent chip / picker */}
+      <div className="relative flex items-center gap-1">
+        {activeTab.pinnedAgentIds.length > 0 && (
+          <AgentPresencePill
+            windowId={windowId}
+            tabId={activeTab.id}
+            pinnedAgentIds={activeTab.pinnedAgentIds}
+            triggerRef={agentChipRef}
+          />
+        )}
+        {/* "+ agent" affordance — always visible (until at cap) so users can
+             add a 2nd/3rd/4th agent without remembering Cmd+Shift+A. */}
+        {activeTab.pinnedAgentIds.length < 4 && (
+          <button
+            ref={agentChipRef}
+            type="button"
+            aria-label="Add agent"
+            aria-haspopup="listbox"
+            aria-expanded={pickerOpen}
+            onClick={() => {
+              setSettingsOpen(false);
+              setSwitcherOpen(false);
+              setManagerOpen(false);
+              setPickerOpen((p) => !p);
+            }}
+            className={
+              activeTab.pinnedAgentIds.length === 0
+                ? "flex items-center gap-1 px-2 py-0.5 rounded-full bg-shell-bg-deep border border-shell-border-subtle text-xs hover:bg-shell-hover"
+                : "flex items-center justify-center w-5 h-5 rounded-full bg-shell-bg-deep border border-shell-border-subtle text-xs hover:bg-shell-hover"
+            }
+            title={activeTab.pinnedAgentIds.length === 0 ? undefined : "Add agent"}
+          >
+            {activeTab.pinnedAgentIds.length === 0 ? "+ agent" : "+"}
+          </button>
+        )}
+        {pickerOpen && (
+          <AgentPickerPopover
+            windowId={windowId}
+            tabId={activeTab.id}
+            profileId={win.profileId}
+            pinnedAgentIds={activeTab.pinnedAgentIds}
+            onClose={() => setPickerOpen(false)}
+            triggerRef={agentChipRef}
+          />
+        )}
+      </div>
+
       {/* Settings button */}
       <div className="relative">
         <button
@@ -107,6 +172,7 @@ export function Chrome({ windowId }: ChromeProps) {
           onClick={() => {
             setSwitcherOpen(false);
             setManagerOpen(false);
+            setPickerOpen(false);
             setSettingsOpen((s) => !s);
           }}
           className="p-1 rounded hover:bg-shell-hover"
@@ -130,6 +196,7 @@ export function Chrome({ windowId }: ChromeProps) {
               onClick={() => {
                 setSettingsOpen(false);
                 setManagerOpen(false);
+                setPickerOpen(false);
                 setSwitcherOpen((s) => !s);
               }}
               className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-shell-bg-deep border border-shell-border-subtle text-xs hover:bg-shell-hover"
