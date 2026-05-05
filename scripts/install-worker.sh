@@ -223,6 +223,206 @@ reexec_into_worker_lxc() {
     "
 }
 
+# --- incus install + controller enrollment --------------------------------
+#
+# Installs incus on Linux workers, configures an HTTPS listener on :8443,
+# generates a one-shot trust token, and POSTs it to the controller so the
+# controller can reach this worker's incus daemon for LXC service deployment.
+#
+# Also called from phase2_inside_lxc (inside the worker LXC) to register
+# the nested incus with the controller. Must be defined before the phase
+# entry-point blocks so it is available when phase2_inside_lxc() calls it.
+#
+# Skip with TAOS_SKIP_INCUS=1 (set automatically on macOS, where incus is
+# Linux-only).  Re-running the installer is safe: each step checks whether
+# it is already done before acting.
+
+install_and_enroll_incus() {
+    # ── 1. Install incus if absent ──────────────────────────────────────
+    if command -v incus >/dev/null 2>&1; then
+        log "incus already installed at $(command -v incus)"
+    else
+        log "installing incus"
+        # Determine distro ID
+        local distro_id=""
+        if [[ -f /etc/os-release ]]; then
+            distro_id="$(. /etc/os-release && echo "${ID:-}")"
+        fi
+
+        case "$distro_id" in
+            ubuntu|debian)
+                # Prefer the official incus package; fall back to the
+                # zabbly repo for older releases that don't ship it yet.
+                if apt-cache show incus >/dev/null 2>&1; then
+                    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq incus
+                else
+                    log "incus not in default apt — adding zabbly repo"
+                    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl gpg
+                    curl -fsSL https://pkgs.zabbly.com/key.asc \
+                        | sudo gpg --dearmor -o /usr/share/keyrings/zabbly.gpg
+                    # Resolve the release codename for the apt sources line
+                    local codename
+                    codename="$(. /etc/os-release && echo "${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}")"
+                    echo "deb [signed-by=/usr/share/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable ${codename} main" \
+                        | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list > /dev/null
+                    sudo apt-get update -qq
+                    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq incus
+                fi
+                ;;
+            fedora|rhel|centos|rocky|almalinux)
+                sudo dnf install -y -q incus
+                ;;
+            arch|manjaro|endeavouros)
+                sudo pacman -S --noconfirm --needed incus
+                ;;
+            *)
+                warn "unrecognised distro '$distro_id' — cannot auto-install incus"
+                warn "  install incus manually then re-run this script, or set TAOS_SKIP_INCUS=1 to skip LXC enrollment"
+                return 0
+                ;;
+        esac
+    fi
+
+    # ── 2. Add user to incus-admin group ───────────────────────────────
+    # Skip group management when running as root (e.g. inside the worker LXC);
+    # root can reach the incus socket directly without group membership.
+    local sg_incus
+    if [[ "$(id -u)" == "0" ]]; then
+        log "running as root — incus-admin group not needed"
+        sg_incus="bash -c"
+    else
+        if groups "$USER" 2>/dev/null | grep -qw incus-admin; then
+            log "user already in incus-admin group"
+        else
+            log "adding $USER to incus-admin group"
+            sudo usermod -aG incus-admin "$USER"
+            log "  NOTE: group change takes effect on next login"
+            log "  using sg to run remaining incus commands in this session"
+        fi
+        # Run incus commands via sg so the group membership is effective
+        # within this script session (avoids the user needing to re-login).
+        sg_incus="sg incus-admin -c"
+    fi
+
+    # ── 3. First-time minimal init ──────────────────────────────────────
+    if $sg_incus "incus list" >/dev/null 2>&1; then
+        log "incus daemon already initialised"
+    else
+        log "running incus admin init --minimal (first-time setup)"
+        $sg_incus "incus admin init --minimal < /dev/null"
+    fi
+
+    # ── 4. Enable HTTPS listener on :8443 ──────────────────────────────
+    local current_addr
+    current_addr="$($sg_incus "incus config get core.https_address" 2>/dev/null || true)"
+    if [[ "$current_addr" == ":8443" ]]; then
+        log "incus HTTPS listener already set to :8443"
+    else
+        log "enabling incus HTTPS listener on :8443"
+        $sg_incus "incus config set core.https_address :8443"
+    fi
+
+    # ── 5. Generate a one-shot trust token ─────────────────────────────
+    log "generating incus trust token for controller enrollment"
+    local token_output
+    token_output="$($sg_incus "incus config trust add controller-enroll" 2>&1)"
+    # The token is the last non-empty line of the output
+    local TOKEN
+    TOKEN="$(echo "$token_output" | awk 'NF{last=$0} END{print last}')"
+    if [[ -z "$TOKEN" ]]; then
+        warn "failed to generate incus trust token — LXC enrollment skipped"
+        warn "  to enroll manually: incus config trust add controller-enroll"
+        warn "  then: curl -X POST $CONTROLLER_URL/api/cluster/workers/$WORKER_NAME/incus-enroll \\"
+        warn "      -H 'Content-Type: application/json' \\"
+        warn "      -d '{\"incus_url\": \"https://<LAN_IP>:8443\", \"token\": \"<TOKEN>\"}'"
+        return 0
+    fi
+
+    # ── 6. Detect LAN IP ───────────────────────────────────────────────
+    # Prefer the source address that the kernel would use to reach the
+    # controller, so we don't accidentally pick up docker0 / incusbr0 /
+    # Tailscale addresses that the controller can't reach back on.
+    local LAN_IP=""
+    local _ctrl_host
+    _ctrl_host="$(printf '%s' "$CONTROLLER_URL" | sed 's|^[^/]*/*/||; s|[:/].*||')"
+    if [[ -n "$_ctrl_host" ]] && command -v ip >/dev/null 2>&1; then
+        LAN_IP="$(ip -4 route get "$_ctrl_host" 2>/dev/null \
+            | awk '/src/{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')"
+    fi
+    if [[ -z "$LAN_IP" ]]; then
+        # Fallback 1: first token from hostname -I (may include bridge IPs)
+        LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    fi
+    if [[ -z "$LAN_IP" ]]; then
+        # Fallback 2: first non-loopback global IPv4
+        LAN_IP="$(ip -4 addr show scope global 2>/dev/null \
+            | awk '/inet /{print $2}' | head -1 | cut -d/ -f1)"
+    fi
+    if [[ -z "$LAN_IP" ]]; then
+        warn "could not detect LAN IP — LXC enrollment skipped"
+        warn "  to enroll manually: curl -X POST $CONTROLLER_URL/api/cluster/workers/$WORKER_NAME/incus-enroll \\"
+        warn "      -H 'Content-Type: application/json' \\"
+        warn "      -d '{\"incus_url\": \"https://<LAN_IP>:8443\", \"token\": \"$TOKEN\"}'"
+        return 0
+    fi
+
+    log "LAN IP: $LAN_IP"
+
+    # ── 7. Register worker with controller ─────────────────────────────
+    # POST /api/cluster/workers so the controller knows this worker exists
+    # before we try to /incus-enroll (that endpoint 404s for unknown workers).
+    # Includes the new LXC-mode fields: host_lan_ip and worker_lxc_image_version.
+    log "registering worker '${WORKER_NAME}' with controller at $CONTROLLER_URL"
+    local reg_code
+    reg_code="$(curl -sS -o /tmp/taos-worker-register.out -w "%{http_code}" \
+        -X POST "$CONTROLLER_URL/api/cluster/workers" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"name\": \"${WORKER_NAME}\",
+            \"url\": \"https://${LAN_IP}:8443\",
+            \"hardware\": {},
+            \"backends\": [],
+            \"capabilities\": [],
+            \"platform\": \"linux\",
+            \"models\": [],
+            \"host_lan_ip\": \"${TAOS_HOST_LAN_IP:-${LAN_IP}}\",
+            \"worker_lxc_image_version\": \"ubuntu/24.04/amd64\"
+        }" \
+        2>/tmp/taos-worker-register.err || true)"
+
+    if [[ "$reg_code" == 2* ]]; then
+        log "worker registered successfully (HTTP $reg_code)"
+    elif [[ "$reg_code" == "409" ]]; then
+        log "worker already registered (HTTP 409) — continuing to incus-enroll"
+    else
+        warn "worker registration returned HTTP $reg_code"
+        warn "  response: $(cat /tmp/taos-worker-register.out 2>/dev/null)"
+        warn "  continuing to incus-enroll anyway"
+    fi
+
+    # ── 8. POST to controller ───────────────────────────────────────────
+    log "enrolling incus remote with controller at $CONTROLLER_URL"
+    local http_code
+    http_code="$(curl -sS -o /tmp/taos-incus-enroll.out -w "%{http_code}" \
+        -X POST "$CONTROLLER_URL/api/cluster/workers/$WORKER_NAME/incus-enroll" \
+        -H "Content-Type: application/json" \
+        -d "{\"incus_url\": \"https://${LAN_IP}:8443\", \"token\": \"${TOKEN}\"}" \
+        2>/tmp/taos-incus-enroll.err || true)"
+
+    if [[ "$http_code" == 2* ]]; then
+        log "incus remote enrolled successfully (HTTP $http_code)"
+    else
+        warn "incus enrollment returned HTTP $http_code"
+        warn "  response: $(cat /tmp/taos-incus-enroll.out 2>/dev/null)"
+        warn "  to retry manually:"
+        warn "    TOKEN=\$(incus config trust add controller-enroll 2>&1 | tail -1)"
+        warn "    curl -X POST $CONTROLLER_URL/api/cluster/workers/$WORKER_NAME/incus-enroll \\"
+        warn "        -H 'Content-Type: application/json' \\"
+        warn "        -d \"{\\\"incus_url\\\": \\\"https://$LAN_IP:8443\\\", \\\"token\\\": \\\"\$TOKEN\\\"}\" "
+        warn "  set TAOS_SKIP_INCUS=1 to skip this block entirely on re-runs"
+    fi
+}
+
 # --- phase 2: nested incus + bees + register (runs inside worker LXC) -----
 
 phase2_inside_lxc() {
@@ -562,208 +762,12 @@ detect_and_advise_accelerators() {
 
 detect_and_advise_accelerators
 
-# --- incus install + controller enrollment --------------------------------
-#
-# Installs incus on Linux workers, configures an HTTPS listener on :8443,
-# generates a one-shot trust token, and POSTs it to the controller so the
-# controller can reach this worker's incus daemon for LXC service deployment.
-#
-# Skip with TAOS_SKIP_INCUS=1 (set automatically on macOS, where incus is
-# Linux-only).  Re-running the installer is safe: each step checks whether
-# it is already done before acting.
-
-# Detect macOS — incus is Linux-only
+# Detect macOS — incus is Linux-only (used by the incus enrollment check below)
 if [[ "$os_name" == "Darwin" ]]; then
     log "macOS detected — incus is Linux-only; skipping LXC enrollment"
     log "  set TAOS_SKIP_INCUS=1 to suppress this message on future runs"
     TAOS_SKIP_INCUS=1
 fi
-
-install_and_enroll_incus() {
-    # ── 1. Install incus if absent ──────────────────────────────────────
-    if command -v incus >/dev/null 2>&1; then
-        log "incus already installed at $(command -v incus)"
-    else
-        log "installing incus"
-        # Determine distro ID
-        local distro_id=""
-        if [[ -f /etc/os-release ]]; then
-            distro_id="$(. /etc/os-release && echo "${ID:-}")"
-        fi
-
-        case "$distro_id" in
-            ubuntu|debian)
-                # Prefer the official incus package; fall back to the
-                # zabbly repo for older releases that don't ship it yet.
-                if apt-cache show incus >/dev/null 2>&1; then
-                    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq incus
-                else
-                    log "incus not in default apt — adding zabbly repo"
-                    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl gpg
-                    curl -fsSL https://pkgs.zabbly.com/key.asc \
-                        | sudo gpg --dearmor -o /usr/share/keyrings/zabbly.gpg
-                    # Resolve the release codename for the apt sources line
-                    local codename
-                    codename="$(. /etc/os-release && echo "${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}")"
-                    echo "deb [signed-by=/usr/share/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable ${codename} main" \
-                        | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list > /dev/null
-                    sudo apt-get update -qq
-                    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq incus
-                fi
-                ;;
-            fedora|rhel|centos|rocky|almalinux)
-                sudo dnf install -y -q incus
-                ;;
-            arch|manjaro|endeavouros)
-                sudo pacman -S --noconfirm --needed incus
-                ;;
-            *)
-                warn "unrecognised distro '$distro_id' — cannot auto-install incus"
-                warn "  install incus manually then re-run this script, or set TAOS_SKIP_INCUS=1 to skip LXC enrollment"
-                return 0
-                ;;
-        esac
-    fi
-
-    # ── 2. Add user to incus-admin group ───────────────────────────────
-    # Skip group management when running as root (e.g. inside the worker LXC);
-    # root can reach the incus socket directly without group membership.
-    local sg_incus
-    if [[ "$(id -u)" == "0" ]]; then
-        log "running as root — incus-admin group not needed"
-        sg_incus="bash -c"
-    else
-        if groups "$USER" 2>/dev/null | grep -qw incus-admin; then
-            log "user already in incus-admin group"
-        else
-            log "adding $USER to incus-admin group"
-            sudo usermod -aG incus-admin "$USER"
-            log "  NOTE: group change takes effect on next login"
-            log "  using sg to run remaining incus commands in this session"
-        fi
-        # Run incus commands via sg so the group membership is effective
-        # within this script session (avoids the user needing to re-login).
-        sg_incus="sg incus-admin -c"
-    fi
-
-    # ── 3. First-time minimal init ──────────────────────────────────────
-    if $sg_incus "incus list" >/dev/null 2>&1; then
-        log "incus daemon already initialised"
-    else
-        log "running incus admin init --minimal (first-time setup)"
-        $sg_incus "incus admin init --minimal < /dev/null"
-    fi
-
-    # ── 4. Enable HTTPS listener on :8443 ──────────────────────────────
-    local current_addr
-    current_addr="$($sg_incus "incus config get core.https_address" 2>/dev/null || true)"
-    if [[ "$current_addr" == ":8443" ]]; then
-        log "incus HTTPS listener already set to :8443"
-    else
-        log "enabling incus HTTPS listener on :8443"
-        $sg_incus "incus config set core.https_address :8443"
-    fi
-
-    # ── 5. Generate a one-shot trust token ─────────────────────────────
-    log "generating incus trust token for controller enrollment"
-    local token_output
-    token_output="$($sg_incus "incus config trust add controller-enroll" 2>&1)"
-    # The token is the last non-empty line of the output
-    local TOKEN
-    TOKEN="$(echo "$token_output" | awk 'NF{last=$0} END{print last}')"
-    if [[ -z "$TOKEN" ]]; then
-        warn "failed to generate incus trust token — LXC enrollment skipped"
-        warn "  to enroll manually: incus config trust add controller-enroll"
-        warn "  then: curl -X POST $CONTROLLER_URL/api/cluster/workers/$WORKER_NAME/incus-enroll \\"
-        warn "      -H 'Content-Type: application/json' \\"
-        warn "      -d '{\"incus_url\": \"https://<LAN_IP>:8443\", \"token\": \"<TOKEN>\"}'"
-        return 0
-    fi
-
-    # ── 6. Detect LAN IP ───────────────────────────────────────────────
-    # Prefer the source address that the kernel would use to reach the
-    # controller, so we don't accidentally pick up docker0 / incusbr0 /
-    # Tailscale addresses that the controller can't reach back on.
-    local LAN_IP=""
-    local _ctrl_host
-    _ctrl_host="$(printf '%s' "$CONTROLLER_URL" | sed 's|^[^/]*/*/||; s|[:/].*||')"
-    if [[ -n "$_ctrl_host" ]] && command -v ip >/dev/null 2>&1; then
-        LAN_IP="$(ip -4 route get "$_ctrl_host" 2>/dev/null \
-            | awk '/src/{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')"
-    fi
-    if [[ -z "$LAN_IP" ]]; then
-        # Fallback 1: first token from hostname -I (may include bridge IPs)
-        LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-    fi
-    if [[ -z "$LAN_IP" ]]; then
-        # Fallback 2: first non-loopback global IPv4
-        LAN_IP="$(ip -4 addr show scope global 2>/dev/null \
-            | awk '/inet /{print $2}' | head -1 | cut -d/ -f1)"
-    fi
-    if [[ -z "$LAN_IP" ]]; then
-        warn "could not detect LAN IP — LXC enrollment skipped"
-        warn "  to enroll manually: curl -X POST $CONTROLLER_URL/api/cluster/workers/$WORKER_NAME/incus-enroll \\"
-        warn "      -H 'Content-Type: application/json' \\"
-        warn "      -d '{\"incus_url\": \"https://<LAN_IP>:8443\", \"token\": \"$TOKEN\"}'"
-        return 0
-    fi
-
-    log "LAN IP: $LAN_IP"
-
-    # ── 7. Register worker with controller ─────────────────────────────
-    # POST /api/cluster/workers so the controller knows this worker exists
-    # before we try to /incus-enroll (that endpoint 404s for unknown workers).
-    # Includes the new LXC-mode fields: host_lan_ip and worker_lxc_image_version.
-    log "registering worker '${WORKER_NAME}' with controller at $CONTROLLER_URL"
-    local reg_code
-    reg_code="$(curl -sS -o /tmp/taos-worker-register.out -w "%{http_code}" \
-        -X POST "$CONTROLLER_URL/api/cluster/workers" \
-        -H "Content-Type: application/json" \
-        -d "{
-            \"name\": \"${WORKER_NAME}\",
-            \"url\": \"https://${LAN_IP}:8443\",
-            \"hardware\": {},
-            \"backends\": [],
-            \"capabilities\": [],
-            \"platform\": \"linux\",
-            \"models\": [],
-            \"host_lan_ip\": \"${TAOS_HOST_LAN_IP:-${LAN_IP}}\",
-            \"worker_lxc_image_version\": \"ubuntu/24.04/amd64\"
-        }" \
-        2>/tmp/taos-worker-register.err || true)"
-
-    if [[ "$reg_code" == 2* ]]; then
-        log "worker registered successfully (HTTP $reg_code)"
-    elif [[ "$reg_code" == "409" ]]; then
-        log "worker already registered (HTTP 409) — continuing to incus-enroll"
-    else
-        warn "worker registration returned HTTP $reg_code"
-        warn "  response: $(cat /tmp/taos-worker-register.out 2>/dev/null)"
-        warn "  continuing to incus-enroll anyway"
-    fi
-
-    # ── 8. POST to controller ───────────────────────────────────────────
-    log "enrolling incus remote with controller at $CONTROLLER_URL"
-    local http_code
-    http_code="$(curl -sS -o /tmp/taos-incus-enroll.out -w "%{http_code}" \
-        -X POST "$CONTROLLER_URL/api/cluster/workers/$WORKER_NAME/incus-enroll" \
-        -H "Content-Type: application/json" \
-        -d "{\"incus_url\": \"https://${LAN_IP}:8443\", \"token\": \"${TOKEN}\"}" \
-        2>/tmp/taos-incus-enroll.err || true)"
-
-    if [[ "$http_code" == 2* ]]; then
-        log "incus remote enrolled successfully (HTTP $http_code)"
-    else
-        warn "incus enrollment returned HTTP $http_code"
-        warn "  response: $(cat /tmp/taos-incus-enroll.out 2>/dev/null)"
-        warn "  to retry manually:"
-        warn "    TOKEN=\$(incus config trust add controller-enroll 2>&1 | tail -1)"
-        warn "    curl -X POST $CONTROLLER_URL/api/cluster/workers/$WORKER_NAME/incus-enroll \\"
-        warn "        -H 'Content-Type: application/json' \\"
-        warn "        -d \"{\\\"incus_url\\\": \\\"https://$LAN_IP:8443\\\", \\\"token\\\": \\\"\$TOKEN\\\"}\" "
-        warn "  set TAOS_SKIP_INCUS=1 to skip this block entirely on re-runs"
-    fi
-}
 
 # --- bundled Ollama backend (TAOS-namespaced) ----------------------------
 #
