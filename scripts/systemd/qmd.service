@@ -35,7 +35,7 @@ Environment=QMD_BIND=0.0.0.0
 # /etc/default/qmd to point at a remote backend like rkllama on a Pi NPU
 # or an Ollama server elsewhere on the LAN.
 Environment=QMD_BACKEND=
-ExecStart=/usr/bin/qmd serve \
+ExecStart=__TAOS_QMD_BIN__ serve \
     --port ${QMD_PORT} \
     --bind ${QMD_BIND}
 Restart=always

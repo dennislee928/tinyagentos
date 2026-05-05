@@ -426,15 +426,34 @@ if [[ -z "${TAOS_SKIP_QMD:-}" ]]; then
             fi
             if [[ -f scripts/systemd/qmd.service ]]; then
                 log "installing /etc/systemd/system/qmd.service"
-                # The unit ships with __TAOS_USER__ / __TAOS_GROUP__ placeholders.
-                # Substitute the real user/group at install time. Prefer the
-                # invoking sudo user (so the service runs as them), falling
-                # back to 'root' if the script was run by root directly.
+                # The unit ships with __TAOS_USER__ / __TAOS_GROUP__ /
+                # __TAOS_QMD_BIN__ placeholders. Substitute real values at
+                # install time. User/group: prefer invoking sudo user so the
+                # service runs as them; fall back to 'root' if invoked as
+                # root directly. qmd binary path: discover via PATH (Ubuntu
+                # puts it at /usr/bin/qmd via dpkg's npm prefix; Fedora's
+                # npm uses /usr/local prefix and lands at /usr/local/bin/qmd).
                 taos_user="${SUDO_USER:-root}"
                 taos_group=$(id -gn "$taos_user" 2>/dev/null || echo "$taos_user")
+                taos_qmd_bin=$(command -v qmd 2>/dev/null)
+                if [[ -z "$taos_qmd_bin" ]]; then
+                    # Fallback hunt — npm root -g + /bin/qmd, then common paths
+                    for cand in "$(npm root -g 2>/dev/null)/@jaylfc/qmd/bin/qmd" \
+                                /usr/local/bin/qmd /usr/bin/qmd; do
+                        if [[ -x "$cand" ]]; then
+                            taos_qmd_bin="$cand"
+                            break
+                        fi
+                    done
+                fi
+                if [[ -z "$taos_qmd_bin" ]]; then
+                    die "qmd binary not found after npm install — cannot render qmd.service"
+                fi
+                log "qmd binary at $taos_qmd_bin"
                 $local_sudo sed \
                     -e "s|__TAOS_USER__|${taos_user}|g" \
                     -e "s|__TAOS_GROUP__|${taos_group}|g" \
+                    -e "s|__TAOS_QMD_BIN__|${taos_qmd_bin}|g" \
                     scripts/systemd/qmd.service > /tmp/qmd.service.rendered
                 $local_sudo install -m 0644 /tmp/qmd.service.rendered /etc/systemd/system/qmd.service
                 $local_sudo rm -f /tmp/qmd.service.rendered
