@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import requests
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -288,3 +288,22 @@ async def test_multi_sub_partial_failure(store):
 
     # 201 sub (device_a) must still be present
     assert subs[0]["endpoint"] == _ENDPOINT_A
+
+
+# ---------------------------------------------------------------------------
+# 8. Timeout: counted as failed, subscription kept
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_timeout_counted_as_failed(store):
+    await store.upsert_push_subscription("user_a", "device_a", "https://example.com/push", "p", "a")
+
+    # Patch _send_one's executor call site by patching _sync_send to raise
+    # — wait_for catches the exception type and increments failed.
+    with patch.object(push_module, "_sync_send", side_effect=asyncio.TimeoutError()):
+        result = await send(
+            "user_a", {"title": "x"}, store=store, vapid=FAKE_VAPID,
+        )
+    assert result == {"sent": 0, "failed": 1, "removed": 0}
+    rows = await store.list_push_subscriptions("user_a")
+    assert len(rows) == 1  # not deleted on timeout

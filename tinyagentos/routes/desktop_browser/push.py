@@ -39,6 +39,8 @@ _log = logging.getLogger(__name__)
 
 _VAPID_SUB = "mailto:admin@taos.local"
 _SEND_TIMEOUT = 5.0  # seconds per upstream push-service call
+_RATE_LIMIT_PER_MIN = 30
+_WINDOW_SECONDS = 60
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +70,7 @@ class _RateLimiter:
             return True
 
 
-_rate_limiter = _RateLimiter()
+_rate_limiter = _RateLimiter(limit=_RATE_LIMIT_PER_MIN, window_seconds=_WINDOW_SECONDS)
 
 
 # ---------------------------------------------------------------------------
@@ -105,14 +107,14 @@ async def send(
     else:
         subs = all_subs
 
+    if not subs:
+        return {"sent": 0, "failed": 0, "removed": 0}
+
     # Rate-limit check — ONCE per send() invocation, not per device.
     allowed = await _rate_limiter.acquire(user_id)
     if not allowed:
         _log.warning("push: rate limit exceeded for user %r (%d subs dropped)", user_id, len(subs))
         return {"sent": 0, "failed": len(subs), "removed": 0}
-
-    if not subs:
-        return {"sent": 0, "failed": 0, "removed": 0}
 
     loop = asyncio.get_running_loop()
     results = await asyncio.gather(
