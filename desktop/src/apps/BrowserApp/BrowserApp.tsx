@@ -28,6 +28,7 @@ import { WindowChooser } from "./WindowChooser";
 import { CapabilityPromptModal } from "./CapabilityPromptModal";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { Layers, ListChecks } from "lucide-react";
+import { bootstrapPushSubscription } from "../../lib/browser-push-bootstrap";
 
 const DEFAULT_PROFILE_ID = "personal";
 
@@ -64,6 +65,7 @@ export function BrowserApp({ windowId }: BrowserAppProps) {
     navigator.serviceWorker.register("/__taos/sw.js", { scope: "/" }).catch(() => {
       // SW registration can fail in test/HTTP contexts — ignore
     });
+    bootstrapPushSubscription().catch(() => { /* swallow — non-fatal */ });
   }, []);
 
   // Cleanup on unmount: remove the window from browser-store + delete server row

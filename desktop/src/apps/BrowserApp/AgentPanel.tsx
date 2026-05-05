@@ -10,6 +10,7 @@ import { useBrowserAgentStore } from "@/stores/browser-agent-store";
 import type { AgentMessage, AgentEvent } from "@/stores/browser-agent-store";
 import { useBrowserStore } from "@/stores/browser-store";
 import { listAgents, unpinAgent, type AgentDto } from "@/lib/browser-agent-api";
+import { listPushMutes, setPushMute, type PushMute } from "@/lib/browser-push-api";
 
 export interface AgentPanelProps {
   windowId: string;
@@ -54,6 +55,8 @@ export function AgentPanel({ windowId, tabId, profileId, pinnedAgentIds }: Agent
 
   const [agents, setAgents] = useState<AgentDto[]>([]);
   const [inputValue, setInputValue] = useState("");
+  const [mutes, setMutes] = useState<PushMute[]>([]);
+  const [mutesLoading, setMutesLoading] = useState(true);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -62,6 +65,21 @@ export function AgentPanel({ windowId, tabId, profileId, pinnedAgentIds }: Agent
     let cancelled = false;
     listAgents().then((list) => {
       if (!cancelled) setAgents(list);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Load mutes once when panel opens
+  useEffect(() => {
+    let cancelled = false;
+    setMutesLoading(true);
+    listPushMutes().then((list) => {
+      if (!cancelled) {
+        setMutes(list);
+        setMutesLoading(false);
+      }
+    }).catch(() => {
+      if (!cancelled) setMutesLoading(false);
     });
     return () => { cancelled = true; };
   }, []);
@@ -198,6 +216,41 @@ export function AgentPanel({ windowId, tabId, profileId, pinnedAgentIds }: Agent
   }
 
   const activeAgentName = activeAgentId ? getAgentName(activeAgentId) : "Agent";
+
+  const MUTE_KINDS: Array<{ kind: PushMute["kind"]; label: string }> = [
+    { kind: "chat", label: "Chat messages" },
+    { kind: "drive-started", label: "Started driving" },
+    { kind: "download-finished", label: "Download finished" },
+  ];
+
+  function isMuted(agentId: string, kind: PushMute["kind"]): boolean {
+    return mutes.some((m) => m.agent_id === agentId && m.kind === kind);
+  }
+
+  async function handleToggleMute(agentId: string, kind: PushMute["kind"]) {
+    const currentlyMuted = isMuted(agentId, kind);
+    const nextMuted = !currentlyMuted;
+    // Optimistic update
+    setMutes((prev) => {
+      const without = prev.filter((m) => !(m.agent_id === agentId && m.kind === kind));
+      if (nextMuted) {
+        return [...without, { agent_id: agentId, kind, muted_at: Date.now() }];
+      }
+      return without;
+    });
+    try {
+      await setPushMute({ agent_id: agentId, kind, muted: nextMuted });
+    } catch {
+      // Revert on failure
+      setMutes((prev) => {
+        const without = prev.filter((m) => !(m.agent_id === agentId && m.kind === kind));
+        if (currentlyMuted) {
+          return [...without, { agent_id: agentId, kind, muted_at: Date.now() }];
+        }
+        return without;
+      });
+    }
+  }
 
   return (
     <div
@@ -344,6 +397,47 @@ export function AgentPanel({ windowId, tabId, profileId, pinnedAgentIds }: Agent
           >
             Pin to Memory
           </button>
+        </div>
+
+        {/* Notifications section */}
+        <div className="flex flex-col gap-1 px-3 py-2 border-b border-shell-border-subtle flex-shrink-0">
+          <span className="text-[10px] uppercase tracking-wide text-shell-text-secondary mb-1">
+            Notifications
+          </span>
+          {mutesLoading ? (
+            <span className="text-[10px] text-shell-text-secondary italic">Loading…</span>
+          ) : (
+            pinnedAgentIds.map((agentId) => (
+              <div key={agentId} className="flex flex-col gap-1">
+                {pinnedAgentIds.length > 1 && (
+                  <span className="text-[10px] font-medium text-shell-text-secondary truncate">
+                    {getAgentName(agentId)}
+                  </span>
+                )}
+                {MUTE_KINDS.map(({ kind, label }) => {
+                  const checked = !isMuted(agentId, kind);
+                  const toggleId = `notif-${windowId}-${tabId}-${agentId}-${kind}`;
+                  return (
+                    <label
+                      key={kind}
+                      htmlFor={toggleId}
+                      className="flex items-center gap-2 cursor-pointer text-xs text-shell-text-secondary hover:text-shell-text"
+                    >
+                      <input
+                        id={toggleId}
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => handleToggleMute(agentId, kind)}
+                        className="accent-accent"
+                        aria-label={`${label} notifications for ${getAgentName(agentId)}`}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            ))
+          )}
         </div>
 
         {/* Chat thread */}

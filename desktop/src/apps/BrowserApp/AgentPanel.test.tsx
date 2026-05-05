@@ -3,6 +3,7 @@ import { render, screen, fireEvent, act } from "@testing-library/react";
 import { AgentPanel } from "./AgentPanel";
 import { useBrowserAgentStore } from "@/stores/browser-agent-store";
 import * as browserAgentApi from "@/lib/browser-agent-api";
+import * as pushApi from "@/lib/browser-push-api";
 
 const WINDOW_ID = "win-1";
 const TAB_ID = "tab-1";
@@ -24,6 +25,8 @@ beforeEach(() => {
     recentEvents: {},
   });
   vi.spyOn(browserAgentApi, "listAgents").mockResolvedValue(AGENTS);
+  vi.spyOn(pushApi, "listPushMutes").mockResolvedValue([]);
+  vi.spyOn(pushApi, "setPushMute").mockResolvedValue({ ok: true });
 });
 
 afterEach(() => {
@@ -34,7 +37,7 @@ describe("AgentPanel", () => {
   it("renders nothing when panel is closed", () => {
     // Panel not open — store default has no entry
     const { container } = render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     expect(container.firstChild).toBeNull();
   });
@@ -42,7 +45,7 @@ describe("AgentPanel", () => {
   it("renders nothing when pinnedAgentIds is empty", () => {
     openPanel();
     const { container } = render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={[]} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={[]} />,
     );
     expect(container.firstChild).toBeNull();
   });
@@ -50,7 +53,7 @@ describe("AgentPanel", () => {
   it("renders panel when isOpen is true", () => {
     openPanel();
     render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     expect(screen.getByRole("complementary")).toBeInTheDocument();
   });
@@ -58,7 +61,7 @@ describe("AgentPanel", () => {
   it("renders one tab per pinned agent", () => {
     openPanel();
     render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     const tabs = screen.getAllByRole("tab");
     expect(tabs).toHaveLength(PINNED.length);
@@ -67,7 +70,7 @@ describe("AgentPanel", () => {
   it("active tab highlighted with aria-selected=true", () => {
     openPanel("agent-1");
     render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     const tabs = screen.getAllByRole("tab");
     // agent-1 is active
@@ -81,7 +84,7 @@ describe("AgentPanel", () => {
     openPanel("agent-1");
     const setActiveAgentSpy = vi.spyOn(useBrowserAgentStore.getState(), "setActiveAgent");
     render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     const tabs = screen.getAllByRole("tab");
     // Click the second tab (agent-2)
@@ -93,7 +96,7 @@ describe("AgentPanel", () => {
     openPanel();
     const closePanelSpy = vi.spyOn(useBrowserAgentStore.getState(), "closePanel");
     render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     fireEvent.click(screen.getByLabelText("Close agent panel"));
     expect(closePanelSpy).toHaveBeenCalledWith(WINDOW_ID, TAB_ID);
@@ -108,7 +111,7 @@ describe("AgentPanel", () => {
       timestamp: Date.now(),
     });
     render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     expect(screen.getByText(/Example Page/)).toBeInTheDocument();
   });
@@ -123,7 +126,7 @@ describe("AgentPanel", () => {
       timestamp: ts,
     });
     render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     fireEvent.click(screen.getByText("Summarise this page"));
     const msgs = useBrowserAgentStore.getState().messages["win-1:tab-1:agent-1"];
@@ -136,7 +139,7 @@ describe("AgentPanel", () => {
   it("chat textarea Enter sends a user message; Shift+Enter inserts newline", () => {
     openPanel("agent-1");
     render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     const textarea = screen.getByRole("textbox");
 
@@ -158,7 +161,7 @@ describe("AgentPanel", () => {
   it("sent message appears in the thread", () => {
     openPanel("agent-1");
     render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     const textarea = screen.getByRole("textbox");
     fireEvent.change(textarea, { target: { value: "Visible message" } });
@@ -170,7 +173,7 @@ describe("AgentPanel", () => {
     openPanel("agent-1");
     const setPanelWidthSpy = vi.spyOn(useBrowserAgentStore.getState(), "setPanelWidth");
     render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     const handle = screen.getByRole("separator");
 
@@ -192,7 +195,7 @@ describe("AgentPanel", () => {
     openPanel("agent-1");
     const setPanelWidthSpy = vi.spyOn(useBrowserAgentStore.getState(), "setPanelWidth");
     const { unmount } = render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     const handle = screen.getByRole("separator");
 
@@ -220,7 +223,7 @@ describe("AgentPanel", () => {
       timestamp: Date.now(),
     });
     render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     const btn = screen.getByText("Summarise this page");
 
@@ -237,7 +240,7 @@ describe("AgentPanel", () => {
   it("role='complementary' + aria-label='Agent panel'", () => {
     openPanel();
     render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     const panel = screen.getByRole("complementary");
     expect(panel.getAttribute("aria-label")).toBe("Agent panel");
@@ -246,7 +249,7 @@ describe("AgentPanel", () => {
   it("tablist + role='tab' + role='tabpanel' present", () => {
     openPanel();
     render(
-      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} pinnedAgentIds={PINNED} />,
+      <AgentPanel windowId={WINDOW_ID} tabId={TAB_ID} profileId="personal" pinnedAgentIds={PINNED} />,
     );
     expect(screen.getByRole("tablist")).toBeInTheDocument();
     expect(screen.getAllByRole("tab").length).toBeGreaterThan(0);

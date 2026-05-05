@@ -9,7 +9,7 @@
  *
  * Settings are persisted via useBrowserSettingsStore (localStorage).
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import {
   useBrowserSettingsStore,
@@ -17,6 +17,7 @@ import {
   type SearchEngine,
 } from "@/stores/browser-settings-store";
 import { AgentCapabilitiesPanel } from "./AgentCapabilitiesPanel";
+import { bootstrapPushSubscription } from "../../lib/browser-push-bootstrap";
 
 interface SettingsPanelProps {
   profileId: string;
@@ -32,8 +33,26 @@ export function SettingsPanel({ profileId, onClose }: SettingsPanelProps) {
   const setSearchEngine = useBrowserSettingsStore((s) => s.setSearchEngine);
   const ref = useRef<HTMLDivElement | null>(null);
   const [capsOpen, setCapsOpen] = useState(false);
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
+    typeof Notification !== "undefined" ? Notification.permission : "default",
+  );
+  const [notifBusy, setNotifBusy] = useState(false);
 
   const timeoutMinutes = Math.round(discardTimeoutMs / 60_000);
+
+  const handleEnableNotifications = useCallback(async () => {
+    if (typeof Notification === "undefined") return;
+    setNotifBusy(true);
+    try {
+      const result = await Notification.requestPermission();
+      setNotifPermission(result);
+      if (result === "granted") {
+        bootstrapPushSubscription().catch(() => { /* non-fatal */ });
+      }
+    } finally {
+      setNotifBusy(false);
+    }
+  }, []);
 
   // Click-outside dismiss
   useEffect(() => {
@@ -161,6 +180,30 @@ export function SettingsPanel({ profileId, onClose }: SettingsPanelProps) {
           onClose={() => setCapsOpen(false)}
         />
       )}
+
+      {/* Notifications */}
+      <div className="border-t border-shell-border-subtle pt-3 flex flex-col gap-2">
+        <span className="text-xs text-shell-text-secondary">Notifications</span>
+        <button
+          type="button"
+          disabled={notifPermission !== "default" || notifBusy}
+          onClick={handleEnableNotifications}
+          className={[
+            "w-full text-left text-xs px-2 py-1.5 rounded border transition-colors",
+            notifPermission === "granted"
+              ? "border-shell-border-subtle text-shell-text-secondary cursor-default"
+              : notifPermission === "denied"
+              ? "border-shell-border-subtle text-shell-text-secondary cursor-default opacity-60"
+              : "border-accent text-accent hover:bg-accent/10 cursor-pointer",
+          ].join(" ")}
+        >
+          {notifPermission === "granted"
+            ? "Notifications enabled"
+            : notifPermission === "denied"
+            ? "Blocked in browser settings"
+            : "Enable browser notifications"}
+        </button>
+      </div>
     </div>
   );
 }

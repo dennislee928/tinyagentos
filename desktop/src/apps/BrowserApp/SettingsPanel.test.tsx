@@ -4,6 +4,7 @@ import { SettingsPanel } from "./SettingsPanel";
 import { TabRenderer, DISCARD_TIMEOUT_MS } from "./TabRenderer";
 import { useBrowserSettingsStore } from "@/stores/browser-settings-store";
 import { useBrowserStore } from "@/stores/browser-store";
+import * as pushBootstrap from "../../lib/browser-push-bootstrap";
 
 const TEST_WINDOW_ID = "win-settings-test";
 
@@ -97,6 +98,73 @@ describe("SettingsPanel — interactions", () => {
     render(<SettingsPanel profileId="prof-test" onClose={onClose} />);
     fireEvent.click(screen.getByRole("button", { name: /close/i }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+describe("SettingsPanel — Notifications button", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows 'Enable browser notifications' when permission is default", () => {
+    vi.stubGlobal("Notification", { permission: "default", requestPermission: vi.fn() });
+    render(<SettingsPanel profileId="prof-test" onClose={() => {}} />);
+    const btn = screen.getByRole("button", { name: /enable browser notifications/i });
+    expect(btn).toBeInTheDocument();
+    expect((btn as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("shows 'Notifications enabled' and disabled when permission is granted", () => {
+    vi.stubGlobal("Notification", { permission: "granted", requestPermission: vi.fn() });
+    render(<SettingsPanel profileId="prof-test" onClose={() => {}} />);
+    const btn = screen.getByRole("button", { name: /notifications enabled/i });
+    expect(btn).toBeInTheDocument();
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows 'Blocked in browser settings' and disabled when permission is denied", () => {
+    vi.stubGlobal("Notification", { permission: "denied", requestPermission: vi.fn() });
+    render(<SettingsPanel profileId="prof-test" onClose={() => {}} />);
+    const btn = screen.getByRole("button", { name: /blocked in browser settings/i });
+    expect(btn).toBeInTheDocument();
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("clicking enable button calls requestPermission and bootstrapPushSubscription when granted", async () => {
+    const requestPermission = vi.fn().mockResolvedValue("granted");
+    vi.stubGlobal("Notification", { permission: "default", requestPermission });
+    vi.spyOn(pushBootstrap, "bootstrapPushSubscription").mockResolvedValue({
+      status: "subscribed",
+      device_id: "dev-1",
+    });
+
+    render(<SettingsPanel profileId="prof-test" onClose={() => {}} />);
+    const btn = screen.getByRole("button", { name: /enable browser notifications/i });
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    expect(requestPermission).toHaveBeenCalledOnce();
+    expect(pushBootstrap.bootstrapPushSubscription).toHaveBeenCalledOnce();
+  });
+
+  it("does NOT call bootstrapPushSubscription when requestPermission resolves denied", async () => {
+    const requestPermission = vi.fn().mockResolvedValue("denied");
+    vi.stubGlobal("Notification", { permission: "default", requestPermission });
+    vi.spyOn(pushBootstrap, "bootstrapPushSubscription").mockResolvedValue({
+      status: "subscribed",
+      device_id: "dev-1",
+    });
+
+    render(<SettingsPanel profileId="prof-test" onClose={() => {}} />);
+    const btn = screen.getByRole("button", { name: /enable browser notifications/i });
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    expect(pushBootstrap.bootstrapPushSubscription).not.toHaveBeenCalled();
   });
 });
 
