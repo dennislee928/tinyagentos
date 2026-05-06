@@ -49,6 +49,7 @@ Filter state lives in `StoreApp` — two `useState` arrays (`selectedDevices`, `
 - Props: `availableBackends: string[]`, `selected: string[]`, `onChange`, `disabled: boolean`
 - Hidden entirely when `disabled` (no devices selected) — no flicker.
 - `availableBackends` is the union of `variants[].backend` across all manifests where any selected device's `tier_id` appears in `hardware_tiers`. When devices change and a previously-selected backend is no longer available, it auto-deselects with a transient toast naming the dropped backend.
+- **Auto-deselect is not auto-restore.** If `rkllama` is selected, the user deselects the Pi (so `rkllama` drops out of the available set and gets auto-deselected), and then later re-selects the Pi, `rkllama` does *not* come back automatically — it just becomes available for re-selection. This keeps the filter state predictable: deselection is always an explicit action by either the user or the auto-cleanup, never a hidden side effect of an unrelated change.
 - Each pill renders via a `BACKEND_META` lookup (label, icon, color); unknown backends fall back to the raw string with default styling.
 
 ### `IncompatibleToggle.tsx`
