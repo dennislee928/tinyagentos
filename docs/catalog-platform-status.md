@@ -32,7 +32,7 @@ this doc records what's actually verified working.
 | Backend | Pi-NPU-16GB | Pi-NPU-32GB | Mac-MLX | Linux-x86-GPU | Linux-x86-CPU | Win-WSL | Notes |
 |---|---|---|---|---|---|---|---|
 | `rkllama` | ✅ | 🔧 | ❌ | ❌ | ❌ | ❌ | install-rknpu.sh ships it; issue #318 cycle stable |
-| `rk-llama.cpp` | ⚠️ | 🔧 | ❌ | ❌ | ❌ | ❌ | binary builds; smoke hit `EMFILE` — needs ulimit/contention fix |
+| `rk-llama.cpp` | ✅ | 🔧 | ❌ | ❌ | ❌ | ❌ | NPU offload verified (288 MiB on RKNPU); pre-built binary on HF mirror; install-rkllamacpp.sh + RkLlamaCppInstaller wired |
 | `ollama` | 🔧 | 🔧 | 🔧 | 🔧 | 🔧 | 🔧 | catalog entry; install path not yet wired |
 | `llama-cpp` | 🔧 | 🔧 | 🔧 | 🔧 | 🔧 | 🔧 | catalog entry; install path not yet wired |
 | `vllm` | ❌ | ❌ | ❌ | 🔧 | ❌ | 🔧 | x86 GPU only; not yet wired |

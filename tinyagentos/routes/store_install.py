@@ -163,6 +163,67 @@ async def install_app(request: Request):
             **result,
         })
 
+    if backend in ("rkllamacpp", "rk-llama.cpp"):
+        # GGUF models served by the rk-llama.cpp llama-server. The
+        # installer downloads the GGUF locally, points the systemd unit
+        # at it, and restarts. Only one model is "active" at a time —
+        # subsequent installs replace the previous active model.
+        from tinyagentos.installers.rkllamacpp_installer import (
+            RkLlamaCppInstaller,
+            DEFAULT_PORT as RKLLAMACPP_DEFAULT_PORT,
+        )
+
+        variant_id = body.get("variant_id")
+        variants = list(getattr(manifest, "variants", []) or [])
+        chosen_variant: dict | None = None
+        if variant_id:
+            chosen_variant = next(
+                (v for v in variants if v.get("id") == variant_id), None
+            )
+        if chosen_variant is None and variants:
+            chosen_variant = variants[0]
+        if chosen_variant is None:
+            return JSONResponse(
+                {"error": f"manifest for {app_id!r} declares method=rkllamacpp but has no variants"},
+                status_code=400,
+            )
+
+        installer = RkLlamaCppInstaller()
+        try:
+            result = await installer.install(
+                app_id, install_config, variant=chosen_variant
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("rk-llama.cpp install failed for %s", app_id)
+            return JSONResponse({"error": str(exc)}, status_code=500)
+
+        if not result.get("success"):
+            return JSONResponse(
+                {"error": result.get("error", "rk-llama.cpp install failed")},
+                status_code=500,
+            )
+
+        store = getattr(request.app.state, "installed_apps", None)
+        if store is not None:
+            await store.install(app_id, body.get("version", ""), meta)
+            await store.update_runtime_location(
+                app_id,
+                host="localhost",
+                port=RKLLAMACPP_DEFAULT_PORT,
+                backend="rk-llama.cpp",
+                ui_path="/",
+            )
+        if registry is not None:
+            version = body.get("version") or (getattr(manifest, "version", "") if manifest else "")
+            registry.mark_installed(app_id, version)
+
+        return JSONResponse({
+            "ok": True,
+            "app_id": app_id,
+            "status": "installed",
+            **result,
+        })
+
     if backend == "lxc":
         # LXC installs require admin_password.
         admin_password = body.get("admin_password", "")
