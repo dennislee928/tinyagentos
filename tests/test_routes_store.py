@@ -97,6 +97,23 @@ class TestStoreAPI:
         assert "ram_mb" in data
         assert data["ram_mb"] >= 0
 
+    async def test_resolve_returns_200_not_500(self, store_client):
+        """Regression: registry.get_app -> registry.get typo caused 500 on every resolve."""
+        resp = await store_client.post(
+            "/api/store/resolve", json={"app_id": "test-model"}
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "result" in data
+        assert data["result"] in ("ok", "err")
+        assert "compat" in data
+
+    async def test_resolve_unknown_manifest_returns_404(self, store_client):
+        resp = await store_client.post(
+            "/api/store/resolve", json={"app_id": "does-not-exist"}
+        )
+        assert resp.status_code == 404
+
 
 @pytest.mark.asyncio
 class TestCategoryPassthrough:
