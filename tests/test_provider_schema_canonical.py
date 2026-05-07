@@ -21,6 +21,7 @@ PATTERNS = [
     re.compile(r"^\s*CLOUD_BACKEND_TYPES\s*=\s*[\{\[\(]"),
     re.compile(r"^\s*LOCAL_BACKEND_TYPES\s*=\s*[\{\[\(]"),
     re.compile(r"^\s*BACKEND_TYPE_MAP\s*=\s*[\{\[\(]"),
+    re.compile(r"^\s*CHAT_BACKEND_TYPE_MAP\s*=\s*[\{\[\(]"),
 ]
 
 
@@ -86,3 +87,20 @@ def test_schema_module_exports_expected_types():
     assert isinstance(schema, list)
     assert len(schema) > 0
     assert all("id" in e and "category" in e and "litellm_prefix" in e for e in schema)
+
+
+def test_adapters_built_from_canonical_schema():
+    """Every provider type in the canonical schema gets an adapter; no stray
+    adapters exist for types not in the schema."""
+    from tinyagentos.providers.types import PROVIDERS_BY_ID
+    from tinyagentos.backend_adapters import _ADAPTERS
+    assert set(_ADAPTERS.keys()) == set(PROVIDERS_BY_ID.keys())
+
+
+def test_chat_prefix_overrides_for_ollama_compat():
+    """ollama and rkllama use the ollama_chat dispatcher prefix; everyone
+    else falls back to their default litellm_prefix."""
+    from tinyagentos.llm_proxy import CHAT_BACKEND_TYPE_MAP
+    assert CHAT_BACKEND_TYPE_MAP.get("ollama") == "ollama_chat"
+    assert CHAT_BACKEND_TYPE_MAP.get("rkllama") == "ollama_chat"
+    assert CHAT_BACKEND_TYPE_MAP.get("openai") == "openai"  # falls through

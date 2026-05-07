@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 import httpx
-from tinyagentos.providers.types import BACKEND_TYPE_MAP, CLOUD_BACKEND_TYPES, LOCAL_BACKEND_TYPES
+from tinyagentos.providers.types import BACKEND_TYPE_MAP, CLOUD_BACKEND_TYPES, LOCAL_BACKEND_TYPES, PROVIDERS_BY_ID
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +64,10 @@ def _pids_listening_on(port: int) -> list[int]:
 # Chat prefix is different from the embedding prefix for ollama-compat
 # backends: ollama_chat uses /api/chat, plain ollama uses /api/generate and
 # /api/embed. LiteLLM needs the right one to route requests correctly.
-CHAT_BACKEND_TYPE_MAP = {
-    **BACKEND_TYPE_MAP,
-    "ollama": "ollama_chat",
-    "rkllama": "ollama_chat",
+# Built from the canonical schema — set litellm_chat_prefix on a ProviderTypeSpec
+# to override its chat dispatcher prefix; it falls back to litellm_prefix.
+CHAT_BACKEND_TYPE_MAP: dict[str, str] = {
+    spec.id: spec.chat_prefix for spec in PROVIDERS_BY_ID.values()
 }
 
 # Cloud provider types — imported from tinyagentos.providers.types (canonical list).
