@@ -125,10 +125,11 @@ def _check_variant(
         if device.free_disk_mb == 0:
             reason = (
                 f"variant {variant.get('id')!r} needs {size_mb} MB disk, "
-                f"but disk capacity for device {device.device_id!r} has not been reported yet "
-                f"(free_disk_mb=0 — worker may not have submitted a hardware profile)"
+                f"but device {device.device_id!r} reports 0 MB free "
+                f"(disk may be full, or capacity has not been reported yet)"
             )
             suggestions = [
+                "Free up disk on this device",
                 "Wait for the worker to report its hardware profile and retry",
                 "Pick a smaller variant",
                 "Install on a worker with more disk",
