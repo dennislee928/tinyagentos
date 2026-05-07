@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 import httpx
+from tinyagentos.providers.types import BACKEND_TYPE_MAP, CLOUD_BACKEND_TYPES, LOCAL_BACKEND_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -57,20 +58,8 @@ def _pids_listening_on(port: int) -> list[int]:
             continue
     return pids
 
-# Map TinyAgentOS backend types to LiteLLM model prefixes
-BACKEND_TYPE_MAP = {
-    "ollama": "ollama",
-    "rkllama": "ollama",  # rkllama is ollama-compatible on /api/embed too
-    "llama-cpp": "openai",
-    "vllm": "openai",
-    "exo": "openai",
-    "mlx": "openai",
-    "openai": "openai",
-    "anthropic": "anthropic",
-    "openrouter": "openrouter",
-    "kilocode": "openai",  # kilocode is OpenAI-compatible; api_base set explicitly
-    "openai-compatible": "openai",  # user-supplied OpenAI-compatible endpoint; api_base required
-}
+# Map TinyAgentOS backend types to LiteLLM model prefixes.
+# Canonical list imported from tinyagentos.providers.types — do not redefine here.
 
 # Chat prefix is different from the embedding prefix for ollama-compat
 # backends: ollama_chat uses /api/chat, plain ollama uses /api/generate and
@@ -81,9 +70,7 @@ CHAT_BACKEND_TYPE_MAP = {
     "rkllama": "ollama_chat",
 }
 
-# Cloud provider types that may serve multiple named models and require
-# per-model model_list entries so agents can route by exact model id.
-CLOUD_BACKEND_TYPES = {"openai", "anthropic", "openrouter", "kilocode", "openai-compatible"}
+# Cloud provider types — imported from tinyagentos.providers.types (canonical list).
 
 # Canonical alias the deployer injects into agent containers as
 # TAOS_EMBEDDING_MODEL. Agents that want an embedding call this name and
@@ -187,8 +174,12 @@ def generate_litellm_config(backends: list[dict], default_model: str = "default"
             "model": f"{prefix}/{model_name}",
         }
 
-        # Set api_base for local/self-hosted backends and openai-compatible
-        if backend_type in ("ollama", "rkllama", "llama-cpp", "vllm", "exo", "mlx", "openai-compatible"):
+        # Set api_base for self-hosted backends and openai-compatible (which
+        # is cloud-categorised but user-supplied, so api_base is required).
+        # Image-generation types (sd-cpp, rknn-sd) are excluded — they
+        # don't speak the LiteLLM completion API and are not wired here.
+        _NEEDS_API_BASE = (LOCAL_BACKEND_TYPES - {"sd-cpp", "rknn-sd"}) | {"openai-compatible"}
+        if backend_type in _NEEDS_API_BASE:
             litellm_params["api_base"] = url
 
         # API key from secrets reference

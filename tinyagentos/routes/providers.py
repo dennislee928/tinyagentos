@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from tinyagentos.backend_adapters import get_adapter
 from tinyagentos.config import save_config_locked, VALID_BACKEND_TYPES
+from tinyagentos.providers.types import CLOUD_BACKEND_TYPES, to_schema_dict
 from tinyagentos.lifecycle_manager import LifecycleManager
 from tinyagentos.llm_proxy import TAOS_LITELLM_MASTER_KEY
 
@@ -19,7 +20,8 @@ router = APIRouter()
 
 # Provider categories used by the UI to group entries. The backend
 # doesn't care about category for routing — it's purely display metadata.
-CLOUD_TYPES = {"openai", "anthropic", "openrouter", "kilocode", "openai-compatible"}
+# Canonical list lives in tinyagentos/providers/types.py.
+CLOUD_TYPES = CLOUD_BACKEND_TYPES
 
 # Defaults applied per-type when the Add Provider form doesn't supply
 # them. Covers the case where the UI collects just api_key + name and
@@ -237,6 +239,14 @@ class ProviderPatch(BaseModel):
 
 class ProviderStop(BaseModel):
     force: bool = False
+
+@router.get("/api/providers/schema")
+async def get_provider_schema():
+    """Provider type catalog. Used by the frontend Providers picker.
+    Auth-exempt because the picker renders before the user is fully authed
+    in some flows (e.g. fresh setup)."""
+    return {"providers": to_schema_dict()}
+
 
 @router.get("/api/providers")
 async def list_providers(request: Request):
