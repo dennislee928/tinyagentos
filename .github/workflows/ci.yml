@@ -5,18 +5,27 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  schedule:
+    # 06:00 UTC daily run keeps the 3.11 leg honest without making every
+    # PR wait 14 extra minutes on it. 3.11 is consistently ~2x slower
+    # than 3.12/3.13 due to per-test asyncio overhead — investigated
+    # with per-test timing and the gap is distributed (not a single
+    # slow test), so a kernel-level interpreter perf issue rather than
+    # something we can fix in our suite.
+    - cron: "0 6 * * *"
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    # 3.11 is consistently the slowest matrix leg (~25-30 min) — the
-    # SPA-build drop in this PR only saved ~1.5 min, so the previous
-    # 45-min cap stays. Future investigation: figure out why 3.11 is
-    # ~10 min slower than 3.12/3.13 and whether dropping it is OK.
+    # 45 min cap accommodates the cron run that includes 3.11 (~30 min);
+    # 3.12/3.13 PR runs finish in ~16 min, so this only kicks in if 3.11
+    # ever drifts further.
     timeout-minutes: 45
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # PR + push runs cover the latest two; the daily cron run
+        # below adds 3.11 so the minimum-supported version stays tested.
+        python-version: ${{ github.event_name == 'schedule' && fromJSON('["3.11", "3.12", "3.13"]') || fromJSON('["3.12", "3.13"]') }}
 
     steps:
       - uses: actions/checkout@v5
