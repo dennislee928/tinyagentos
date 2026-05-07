@@ -15,31 +15,31 @@ const LONG_THRESHOLD_S = 60;
 
 export function BackendBanner() {
   const { status, secondsReconnecting } = useBackendStatus();
-  if (status === "up") return null;
-
   const takingLong = secondsReconnecting >= LONG_THRESHOLD_S;
   const message = takingLong
     ? "taOS is taking longer than usual."
     : "taOS is restarting…";
 
+  // Always render the live region (empty when up) so screen readers attach to
+  // it before content arrives. Visible chrome is conditional on status.
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      // z-[9500]: above app chrome / Launchpad (~9000), below toasts/modals (10000+).
-      className="fixed top-0 left-0 right-0 z-[9500] flex items-center justify-center gap-3 bg-amber-500/95 px-4 py-2 text-sm font-medium text-amber-950 shadow-md"
-    >
-      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-      <span>{message}</span>
-      {takingLong && (
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="ml-3 inline-flex items-center gap-1.5 rounded bg-amber-950/15 px-2.5 py-1 text-xs font-semibold hover:bg-amber-950/25"
-        >
-          <RefreshCw className="h-3 w-3" aria-hidden="true" />
-          Refresh page
-        </button>
+    <div role="status" aria-live="polite">
+      {status !== "up" && (
+        // z-[9500]: above app chrome / Launchpad (~9000), below toasts/modals (10000+).
+        <div className="fixed top-0 left-0 right-0 z-[9500] flex items-center justify-center gap-3 bg-amber-500/95 px-4 py-2 text-sm font-medium text-amber-950 shadow-md">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          <span>{message}</span>
+          {takingLong && (
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="ml-3 inline-flex items-center gap-1.5 rounded bg-amber-950/15 px-2.5 py-1 text-xs font-semibold hover:bg-amber-950/25"
+            >
+              <RefreshCw className="h-3 w-3" aria-hidden="true" />
+              Refresh page
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

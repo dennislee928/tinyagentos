@@ -15,9 +15,10 @@
  * UX lives entirely in app code.
  */
 declare const self: ServiceWorkerGlobalScope;
+declare const __TAOS_VERSION__: string;
 export {};
 
-const VERSION = "v1";
+const VERSION = __TAOS_VERSION__;
 const STATIC_CACHE = `taos-static-${VERSION}`;
 
 const PRECACHE_URLS = [
@@ -35,9 +36,18 @@ const PRECACHE_URLS = [
 ];
 
 self.addEventListener("install", (event: ExtendableEvent) => {
-  event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) => cache.addAll(PRECACHE_URLS))
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(STATIC_CACHE);
+    // Per-URL add so a single missing asset doesn't abort the whole install.
+    // Optional precache misses (e.g. an icon that wasn't shipped this build)
+    // shouldn't break the SW — log and continue.
+    const results = await Promise.allSettled(PRECACHE_URLS.map((url) => cache.add(url)));
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.warn("[sw] precache failed for", PRECACHE_URLS[i], r.reason);
+      }
+    });
+  })());
   self.skipWaiting();
 });
 

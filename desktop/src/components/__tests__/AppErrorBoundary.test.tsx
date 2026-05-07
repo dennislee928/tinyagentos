@@ -9,13 +9,18 @@ function Thrower({ err }: { err: Error }): JSX.Element {
 
 describe("<AppErrorBoundary />", () => {
   let consoleErr: ReturnType<typeof vi.spyOn>;
+  let originalLocation: Location;
   beforeEach(() => {
     // React logs caught errors loudly in tests; silence to keep output clean.
     consoleErr = vi.spyOn(console, "error").mockImplementation(() => {});
+    originalLocation = window.location;
   });
   afterEach(() => {
     consoleErr.mockRestore();
     vi.useRealTimers();
+    Object.defineProperty(window, "location", {
+      value: originalLocation, writable: true, configurable: true,
+    });
   });
 
   it("renders children when there's no error", () => {

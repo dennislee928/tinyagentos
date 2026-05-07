@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { BackendBanner } from "../BackendBanner";
 
@@ -8,14 +8,28 @@ vi.mock("@/contexts/BackendStatusContext", () => ({
 import { useBackendStatus } from "@/contexts/BackendStatusContext";
 
 describe("<BackendBanner />", () => {
-  beforeEach(() => vi.mocked(useBackendStatus).mockReset());
+  let originalLocation: Location;
 
-  it("renders nothing when status is 'up'", () => {
+  beforeEach(() => {
+    vi.mocked(useBackendStatus).mockReset();
+    originalLocation = window.location;
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "location", {
+      value: originalLocation, writable: true, configurable: true,
+    });
+  });
+
+  it("renders an empty live region when status is 'up' (so screen readers attach before content)", () => {
     vi.mocked(useBackendStatus).mockReturnValue({
       status: "up", currentVersion: "0.1.0", secondsReconnecting: 0,
     });
     const { container } = render(<BackendBanner />);
-    expect(container.firstChild).toBeNull();
+    // Live region wrapper is always present (a11y); empty when up.
+    const region = container.querySelector('[role="status"]');
+    expect(region).not.toBeNull();
+    expect(region?.textContent?.trim() ?? "").toBe("");
   });
 
   it("renders 'taOS is restarting…' when reconnecting under 60s", () => {
