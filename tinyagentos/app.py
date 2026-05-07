@@ -691,7 +691,11 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
             _dq_backend = _get_container_backend()
             app.state.disk_quota_monitor = DiskQuotaMonitor(config, _dq_backend, notif_store)
         except Exception:
-            logger.exception("disk quota monitor failed to initialise — disk routes will still work")
+            logger.exception(
+                "disk quota monitor failed to initialise (likely because no container backend is "
+                "configured); container-quota tracking disabled, system-wide disk usage still "
+                "reported via shutil.disk_usage()"
+            )
             app.state.disk_quota_monitor = None
 
         try:

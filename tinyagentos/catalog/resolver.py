@@ -122,21 +122,35 @@ def _check_variant(
     size_mb = int(variant.get("size_mb", 0) or 0)
     if size_mb > 0 and device.free_disk_mb < size_mb:
         # Disk gate runs even with force=True — you can't write to a full disk.
-        return ResolveErr(
-            reason=(
+        if device.free_disk_mb == 0:
+            reason = (
+                f"variant {variant.get('id')!r} needs {size_mb} MB disk, "
+                f"but disk capacity for device {device.device_id!r} has not been reported yet "
+                f"(free_disk_mb=0 — worker may not have submitted a hardware profile)"
+            )
+            suggestions = [
+                "Wait for the worker to report its hardware profile and retry",
+                "Pick a smaller variant",
+                "Install on a worker with more disk",
+            ]
+        else:
+            reason = (
                 f"variant {variant.get('id')!r} needs {size_mb} MB disk, "
                 f"device has {device.free_disk_mb} MB free"
-            ),
+            )
+            suggestions = [
+                "Pick a smaller variant",
+                "Free up disk on this device",
+                "Install on a worker with more disk",
+            ]
+        return ResolveErr(
+            reason=reason,
             near_miss={
                 "variant": variant.get("id"),
                 "blocked_by": "disk",
                 "short_by_mb": size_mb - device.free_disk_mb,
             },
-            suggestions=[
-                "Pick a smaller variant",
-                "Free up disk on this device",
-                "Install on a worker with more disk",
-            ],
+            suggestions=suggestions,
         )
 
     closest_short_mb = -1
