@@ -265,14 +265,14 @@ class TestModelsPassthrough:
             "name": "llama-with-key",
             "type": "llama-cpp",
             "url": "http://localhost:8080",
-            "api_key_secret": "provider-llama-with-key-key",
+            "api_key_secret": "provider-llama-with-key-key",  # noqa: S105
         })
         assert resp.status_code == 200
         stored = next(
             b for b in app.state.config.backends
             if b.get("name") == "llama-with-key"
         )
-        assert stored["api_key_secret"] == "provider-llama-with-key-key"
+        assert stored["api_key_secret"] == "provider-llama-with-key-key"  # noqa: S105
 
     async def test_add_openai_compatible_provider_with_custom_url(self, client, app):
         """An openai-compatible provider can be created with a caller-supplied
@@ -282,7 +282,7 @@ class TestModelsPassthrough:
             "name": "my-litellm",
             "type": "openai-compatible",
             "url": custom_url,
-            "api_key_secret": "provider-my-litellm-key",
+            "api_key_secret": "provider-my-litellm-key",  # noqa: S105
         })
         assert resp.status_code == 200
         stored = next(
@@ -290,4 +290,4 @@ class TestModelsPassthrough:
             if b.get("name") == "my-litellm"
         )
         assert stored["url"] == custom_url
-        assert stored["api_key_secret"] == "provider-my-litellm-key"
+        assert stored["api_key_secret"] == "provider-my-litellm-key"  # noqa: S105

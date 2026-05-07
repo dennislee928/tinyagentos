@@ -130,9 +130,12 @@ class OpenAICompatAdapter(BackendAdapter):
 
 
 class CloudAPIAdapter(BackendAdapter):
-    """Adapter for hosted cloud AI APIs (OpenAI, Anthropic, OpenRouter, Kilo).
+    """Adapter for OpenAI-compatible HTTP APIs — both hosted cloud services
+    (OpenAI, Anthropic, OpenRouter, Kilo) and self-hosted servers (LiteLLM,
+    llama.cpp, vLLM via the openai-compatible type).
 
-    Cloud APIs have no /health endpoint. We probe GET /models without auth:
+    We probe GET /models without auth — works regardless of whether the server
+    also exposes a /health endpoint:
     - 2xx  = online (public model list)
     - 401/403 = online (API is responding, just needs a key)
     - anything else = error
@@ -172,20 +175,21 @@ VllmAdapter = OpenAICompatAdapter
 
 ExoAdapter = OpenAICompatAdapter  # Exo exposes OpenAI-compatible API
 
+# Registry mapping the adapter_class name (as stored in ProviderTypeSpec) to
+# the actual class. Add an entry here whenever you introduce a new adapter class.
+_ADAPTER_CLASSES: dict[str, type] = {
+    "CloudAPIAdapter": CloudAPIAdapter,
+    "OllamaCompatAdapter": OllamaCompatAdapter,
+    "OpenAICompatAdapter": OpenAICompatAdapter,
+    "StableDiffusionCppAdapter": StableDiffusionCppAdapter,
+    "RknnSdAdapter": RknnSdAdapter,
+}
+
+from tinyagentos.providers.types import PROVIDERS_BY_ID  # noqa: E402
+
 _ADAPTERS: dict[str, BackendAdapter] = {
-    "rkllama": OllamaCompatAdapter(),
-    "ollama": OllamaCompatAdapter(),
-    "llama-cpp": OpenAICompatAdapter(),
-    "vllm": OpenAICompatAdapter(),
-    "exo": OpenAICompatAdapter(),
-    "mlx": OpenAICompatAdapter(),
-    "openai": CloudAPIAdapter(),
-    "anthropic": CloudAPIAdapter(),
-    "openrouter": CloudAPIAdapter(),
-    "kilocode": CloudAPIAdapter(),
-    "openai-compatible": CloudAPIAdapter(),
-    "sd-cpp": StableDiffusionCppAdapter(),
-    "rknn-sd": RknnSdAdapter(),
+    spec.id: _ADAPTER_CLASSES[spec.adapter_class]()
+    for spec in PROVIDERS_BY_ID.values()
 }
 
 
