@@ -156,12 +156,8 @@ def _get_current_user(request: Request) -> dict | None:
 
 
 def _registry_get(registry, app_id: str):
-    """Look up a manifest by ID using whichever method the registry exposes."""
-    if hasattr(registry, "get_app"):
-        return registry.get_app(app_id)
-    if hasattr(registry, "get"):
-        return registry.get(app_id)
-    return None
+    """Look up a manifest by ID."""
+    return registry.get(app_id)
 
 
 async def _legacy_install(request: Request, body: dict, app_id: str | None, target_remote: str | None) -> JSONResponse:

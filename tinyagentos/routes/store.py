@@ -201,7 +201,7 @@ async def resolve_model(request: Request):
     force = bool(body.get("force", False))
 
     registry = request.app.state.registry
-    manifest = registry.get_app(manifest_id) if registry else None
+    manifest = registry.get(manifest_id) if registry else None
     if manifest is None:
         return JSONResponse({"error": f"manifest {manifest_id!r} not found"}, status_code=404)
 
