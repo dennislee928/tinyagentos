@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
+import { readBackendVersion } from "./scripts/read-version.mjs";
 
 export default defineConfig({
   test: {
@@ -10,6 +11,9 @@ export default defineConfig({
     setupFiles: ["./vitest.setup.ts"],
     // *.spec.ts is reserved for Playwright e2e specs; vitest uses *.test.ts
     exclude: ["**/node_modules/**", "**/dist/**", "tests/**"],
+  },
+  define: {
+    __TAOS_VERSION__: JSON.stringify(readBackendVersion()),
   },
   plugins: [react(), tailwindcss()],
   base: "/desktop/",
@@ -28,8 +32,11 @@ export default defineConfig({
       input: {
         main: path.resolve(__dirname, "index.html"),
         chat: path.resolve(__dirname, "chat.html"),
+        sw: path.resolve(__dirname, "src/sw.ts"),
       },
       output: {
+        entryFileNames: (chunkInfo) =>
+          chunkInfo.name === "sw" ? "sw.js" : "assets/[name]-[hash].js",
         // Split heavy third-party libraries into their own chunks so the
         // shared `main` bundle stays lean and each app's lazy chunk only
         // pulls in the vendor code it actually uses. The buckets are
