@@ -45,10 +45,20 @@ export function BackendStatusProvider({ children }: { children: ReactNode }) {
   }));
 
   useEffect(() => {
-    const refresh = () => setSnap({
-      status: bs.getStatus(),
-      currentVersion: bs.getCurrentVersion(),
-      secondsReconnecting: bs.getSecondsReconnecting(),
+    const refresh = () => setSnap((prev) => {
+      const next = {
+        status: bs.getStatus(),
+        currentVersion: bs.getCurrentVersion(),
+        secondsReconnecting: bs.getSecondsReconnecting(),
+      };
+      if (
+        prev.status === next.status &&
+        prev.currentVersion === next.currentVersion &&
+        prev.secondsReconnecting === next.secondsReconnecting
+      ) {
+        return prev;
+      }
+      return next;
     });
     const unsub = bs.subscribe(refresh);
     bs.start();
@@ -58,6 +68,8 @@ export function BackendStatusProvider({ children }: { children: ReactNode }) {
     return () => {
       unsub();
       clearInterval(tick);
+      // Intentionally do NOT call bs.stop() — the controller is a page-lifetime
+      // singleton; another Provider mount may need it still polling.
     };
   }, [bs]);
 
