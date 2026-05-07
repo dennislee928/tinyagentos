@@ -11,65 +11,12 @@ import { useProcessStore } from "@/stores/process-store";
 import { getApp } from "@/registry/app-registry";
 import { MobileSplitView } from "@/components/mobile/MobileSplitView";
 import { useIsMobile } from "@/hooks/use-is-mobile";
+import { useProviderSchema, type ProviderTypeSpec } from "@/lib/provider-schema";
 
 /* ------------------------------------------------------------------ */
-/*  Constants — matches VALID_BACKEND_TYPES in tinyagentos/config.py  */
+/*  Provider type constants are fetched from /api/providers/schema.   */
+/*  Do NOT add hardcoded type arrays here — see provider-schema.ts.   */
 /* ------------------------------------------------------------------ */
-
-const CLOUD_TYPES = ["openai", "anthropic", "openrouter", "kilocode", "openai-compatible"] as const;
-const LOCAL_TYPES = ["rkllama", "ollama", "llama-cpp", "vllm", "exo", "mlx"] as const;
-type ProviderType = typeof CLOUD_TYPES[number] | typeof LOCAL_TYPES[number];
-
-const DEFAULT_URLS: Partial<Record<ProviderType, string>> = {
-  openai: "https://api.openai.com/v1",
-  anthropic: "https://api.anthropic.com/v1",
-  openrouter: "https://openrouter.ai/api/v1",
-  kilocode: "https://api.kilo.ai/api/gateway",
-  ollama: "http://localhost:11434",
-  rkllama: "http://localhost:8080",
-  "llama-cpp": "http://localhost:8080",
-  vllm: "http://localhost:8000",
-};
-
-interface CloudProviderMeta {
-  label: string;
-  description: string;
-  url: string;
-  keyPlaceholder: string;
-}
-
-const CLOUD_PROVIDER_META: Record<string, CloudProviderMeta> = {
-  openai: {
-    label: "OpenAI",
-    description: "GPT-4o, o1, and more",
-    url: "https://api.openai.com/v1",
-    keyPlaceholder: "sk-...",
-  },
-  anthropic: {
-    label: "Anthropic",
-    description: "Claude Sonnet, Opus, Haiku",
-    url: "https://api.anthropic.com/v1",
-    keyPlaceholder: "sk-ant-...",
-  },
-  openrouter: {
-    label: "OpenRouter",
-    description: "300+ models via one API",
-    url: "https://openrouter.ai/api/v1",
-    keyPlaceholder: "sk-or-...",
-  },
-  kilocode: {
-    label: "Kilo",
-    description: "500+ models, smart routing",
-    url: "https://api.kilo.ai/api/gateway",
-    keyPlaceholder: "kilo-...",
-  },
-  "openai-compatible": {
-    label: "OpenAI-Compatible",
-    description: "LiteLLM, llama.cpp server, vLLM, or any service exposing the OpenAI API",
-    url: "",
-    keyPlaceholder: "your-api-key",
-  },
-};
 
 const STATUS_PILL: Record<string, string> = {
   ok: "bg-emerald-500/20 text-emerald-400",
@@ -131,7 +78,7 @@ const CATEGORY_ORDER: ProviderCategory[] = ["local", "network", "cloud"];
 
 interface FormState {
   name: string;
-  type: ProviderType;
+  type: string;
   url: string;
   apiKey: string;
   priority: string;
@@ -143,12 +90,13 @@ type TestResult = { reachable: boolean; response_ms?: number; models?: ProviderM
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function isCloud(type: string): boolean {
-  return (CLOUD_TYPES as readonly string[]).includes(type);
+function isCloudType(type: string, providers: ProviderTypeSpec[]): boolean {
+  return providers.find((p) => p.id === type)?.category === "cloud";
 }
 
 function TypePill({ type }: { type: string }) {
-  const cloud = isCloud(type);
+  const { providers: schema } = useProviderSchema();
+  const cloud = isCloudType(type, schema);
   return (
     <span
       className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
@@ -219,29 +167,30 @@ function WorkerBadge({ name, platform }: { name: string; platform?: string }) {
   );
 }
 
-function groupByCategory(providers: Provider[]): Record<ProviderCategory, Provider[]> {
+function groupByCategory(providers: Provider[], schema: ProviderTypeSpec[]): Record<ProviderCategory, Provider[]> {
   const groups: Record<ProviderCategory, Provider[]> = { local: [], network: [], cloud: [] };
   for (const p of providers) {
-    const cat: ProviderCategory = p.category ?? (p.source?.startsWith("worker:") ? "network" : (CLOUD_TYPES as readonly string[]).includes(p.type) ? "cloud" : "local");
+    const cat: ProviderCategory = p.category ?? (p.source?.startsWith("worker:") ? "network" : isCloudType(p.type, schema) ? "cloud" : "local");
     groups[cat].push(p);
   }
   return groups;
 }
 
-function defaultFormState(editingProvider?: Provider | null): FormState {
+function defaultFormState(editingProvider?: Provider | null, schema?: ProviderTypeSpec[]): FormState {
   if (editingProvider) {
     return {
       name: editingProvider.name,
-      type: editingProvider.type as ProviderType,
+      type: editingProvider.type,
       url: editingProvider.url,
       apiKey: "",
       priority: String(editingProvider.priority ?? 99),
     };
   }
+  const openai = schema?.find((p) => p.id === "openai");
   return {
     name: "",
     type: "openai",
-    url: DEFAULT_URLS.openai ?? "",
+    url: openai?.default_url ?? "",
     apiKey: "",
     priority: "99",
   };
@@ -265,10 +214,14 @@ function ProviderForm({
 
   const isMobile = useIsMobile();
   const isEdit = !!editing;
+  const { providers: schema } = useProviderSchema();
+
+  const cloudProviders = schema.filter((p) => p.category === "cloud");
+  const localProviders = schema.filter((p) => p.category === "local");
 
   const [step, setStep] = useState<WizardStep>(isEdit ? "config" : "category");
   const [category, setCategory] = useState<WizardCategory | null>(null);
-  const [form, setForm] = useState<FormState>(() => defaultFormState(editing));
+  const [form, setForm] = useState<FormState>(() => defaultFormState(editing, schema));
   const [testResult, setTestResult] = useState<TestResult>(null);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -281,19 +234,20 @@ function ProviderForm({
     setForceEnabled(false);
   }
 
-  function handleTypeChange(t: ProviderType) {
-    setForm((prev) => ({ ...prev, type: t, url: DEFAULT_URLS[t] ?? prev.url }));
+  function handleTypeChange(t: string) {
+    const spec = schema.find((p) => p.id === t);
+    setForm((prev) => ({ ...prev, type: t, url: spec?.default_url || prev.url }));
     setTestResult(null);
     setForceEnabled(false);
   }
 
   function pickCloudProvider(type: string) {
-    const meta = CLOUD_PROVIDER_META[type];
-    if (!meta) return;
+    const spec = schema.find((p) => p.id === type);
+    if (!spec) return;
     setForm((prev) => ({
       ...prev,
-      type: type as ProviderType,
-      url: meta.url,
+      type,
+      url: spec.default_url,
       name: prev.name || type,
     }));
     setTestResult(null);
@@ -391,7 +345,7 @@ function ProviderForm({
   }
 
   const canSave = (isEdit || testResult?.reachable === true || forceEnabled) && form.name.trim().length > 0;
-  const cloudMeta = CLOUD_PROVIDER_META[form.type];
+  const cloudMeta = schema.find((p) => p.id === form.type && p.category === "cloud") ?? null;
 
   return (
     <div
@@ -458,7 +412,11 @@ function ProviderForm({
                       setCategory(cat);
                       if (cat === "cloud") setStep("cloud-pick");
                       else if (cat === "cluster") setStep("cluster-info");
-                      else { setForm((p) => ({ ...p, type: "rkllama", url: DEFAULT_URLS.rkllama ?? "" })); setStep("config"); }
+                      else {
+                        const rkllama = schema.find((p) => p.id === "rkllama");
+                        setForm((p) => ({ ...p, type: "rkllama", url: rkllama?.default_url ?? "" }));
+                        setStep("config");
+                      }
                     }}
                     className="flex flex-col items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 p-4 hover:bg-white/10 hover:border-accent/40 transition-colors text-center"
                     aria-label={`${m.label}: ${m.desc}`}
@@ -475,15 +433,17 @@ function ProviderForm({
           {/* Step: cloud provider picker */}
           {step === "cloud-pick" && (
             <div className="grid grid-cols-2 gap-3" role="group" aria-label="Cloud provider">
-              {Object.entries(CLOUD_PROVIDER_META).map(([type, meta]) => (
+              {cloudProviders.length === 0 ? (
+                <p className="col-span-2 text-xs text-shell-text-tertiary text-center py-4">Loading providers...</p>
+              ) : cloudProviders.map((spec) => (
                 <button
-                  key={type}
-                  onClick={() => pickCloudProvider(type)}
+                  key={spec.id}
+                  onClick={() => pickCloudProvider(spec.id)}
                   className="flex flex-col items-start gap-1 rounded-xl border border-white/10 bg-white/5 p-3.5 hover:bg-white/10 hover:border-accent/40 transition-colors text-left"
-                  aria-label={`${meta.label}: ${meta.description}`}
+                  aria-label={`${spec.label}: ${spec.description}`}
                 >
-                  <span className="text-[13px] font-semibold text-shell-text">{meta.label}</span>
-                  <span className="text-[10px] text-shell-text-tertiary">{meta.description}</span>
+                  <span className="text-[13px] font-semibold text-shell-text">{spec.label}</span>
+                  <span className="text-[10px] text-shell-text-tertiary">{spec.description}</span>
                 </button>
               ))}
             </div>
@@ -540,7 +500,7 @@ function ProviderForm({
                   ) : (
                     <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
                       <ExternalLink size={11} className="text-shell-text-tertiary shrink-0" />
-                      <code className="text-[11px] text-shell-text-tertiary font-mono truncate">{cloudMeta.url}</code>
+                      <code className="text-[11px] text-shell-text-tertiary font-mono truncate">{cloudMeta.default_url}</code>
                     </div>
                   )}
                 </div>
@@ -554,10 +514,10 @@ function ProviderForm({
                     <select
                       id="prov-type"
                       value={form.type}
-                      onChange={(e) => handleTypeChange(e.target.value as ProviderType)}
+                      onChange={(e) => handleTypeChange(e.target.value)}
                       className="flex h-9 w-full rounded-lg border border-white/10 bg-shell-bg-deep px-3 py-1 text-sm text-shell-text focus-visible:outline-none focus-visible:border-accent/40 focus-visible:ring-2 focus-visible:ring-accent/20"
                     >
-                      {LOCAL_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      {localProviders.map((p) => <option key={p.id} value={p.id}>{p.id}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1.5">
@@ -590,7 +550,7 @@ function ProviderForm({
               {/* API Key — required for cloud, optional for local */}
               <div className="space-y-1.5">
                 <Label htmlFor="prov-apikey">
-                  {isCloud(form.type)
+                  {isCloudType(form.type, schema)
                     ? `API Key${isEdit ? " (leave blank to keep existing)" : ""}`
                     : `API Key${isEdit ? " (leave blank to keep existing)" : " (optional)"}`}
                 </Label>
@@ -599,13 +559,13 @@ function ProviderForm({
                   type="password"
                   value={form.apiKey}
                   onChange={(e) => setField("apiKey", e.target.value)}
-                  placeholder={isEdit ? "••••••••" : (cloudMeta?.keyPlaceholder ?? "sk-...")}
+                  placeholder={isEdit ? "••••••••" : (cloudMeta?.key_placeholder ?? "sk-...")}
                   className="font-mono"
                 />
                 <p className="text-[10px] text-shell-text-tertiary">
-                  {!isCloud(form.type) && !isEdit && form.type === "ollama"
+                  {!isCloudType(form.type, schema) && !isEdit && form.type === "ollama"
                     ? "Ollama has no built-in auth — leave blank unless you've configured a reverse proxy with a key"
-                    : !isCloud(form.type) && !isEdit
+                    : !isCloudType(form.type, schema) && !isEdit
                     ? "Leave blank if your server has no authentication configured"
                     : <>Saved as <code>provider-{form.name || "{name}"}-key</code></>}
                 </p>
@@ -702,6 +662,7 @@ function ProviderDetail({
   onRefresh: () => void;
 }) {
   const isMobile = useIsMobile();
+  const { providers: schema } = useProviderSchema();
   const [copied, setCopied] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult>(null);
@@ -960,14 +921,14 @@ function ProviderDetail({
               </div>
             ) : (
               <p className="text-xs text-shell-text-tertiary italic">
-                {isCloud(provider.type) ? "No key configured" : "Not required — local backend"}
+                {isCloudType(provider.type, schema) ? "No key configured" : "Not required — local backend"}
               </p>
             )}
           </CardContent>
         </Card>
 
         {/* Enabled toggle — cloud providers only */}
-        {isCloud(provider.type) && (
+        {isCloudType(provider.type, schema) && (
           <Card className="p-3">
             <CardContent className="p-0">
               <div className="flex items-center justify-between">
@@ -1024,7 +985,7 @@ function ProviderDetail({
         </Card>
 
         {/* Lifecycle settings — only for local, non-cloud providers */}
-        {isLocal && !isCloud(provider.type) && provider.auto_manage !== undefined && (
+        {isLocal && !isCloudType(provider.type, schema) && provider.auto_manage !== undefined && (
           <Card className="p-0 overflow-hidden">
             <div className="px-3 py-2 border-b border-white/5">
               <span className="text-[10px] font-medium text-shell-text-tertiary uppercase tracking-wider">
@@ -1105,6 +1066,7 @@ export function ProvidersApp({ windowId: _windowId }: { windowId: string }) {
   const isMobile = useIsMobile();
   const isMobileRef = useRef(isMobile);
   useEffect(() => { isMobileRef.current = isMobile; }, [isMobile]);
+  const { providers: schema } = useProviderSchema();
 
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1244,7 +1206,7 @@ export function ProvidersApp({ windowId: _windowId }: { windowId: string }) {
               </div>
             ) : (
               (() => {
-                const groups = groupByCategory(providers);
+                const groups = groupByCategory(providers, schema);
                 const nonEmpty = CATEGORY_ORDER.filter((c) => groups[c].length > 0);
 
                 if (isMobile) {
