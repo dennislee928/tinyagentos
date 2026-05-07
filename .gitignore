@@ -4,6 +4,10 @@ __pycache__/
 dist/
 build/
 !mac/build/
+# Compiled SPA bundle — built by `cd desktop && npm run build` on install
+# (see scripts/install-server.sh) or on dev (`npm run dev`). Committing it
+# means every frontend-touching PR conflicts on hashed asset filenames.
+static/desktop/
 mac/launcher/.build/
 *.db
 *.sqlite3

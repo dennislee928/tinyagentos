@@ -14,10 +14,14 @@ cd tinyagentos
 python3 -m venv venv
 source venv/bin/activate
 pip install -e ".[dev]"
+# Build the desktop SPA — static/desktop/ is gitignored (generated artifact)
+cd desktop && npm install && npm run build && cd ..
 pytest tests/ -v
 ```
 
-Python 3.10 or later is required.
+Python 3.10 or later and Node.js 22 or later are required.
+
+For frontend development, use `cd desktop && npm run dev` — Vite serves with hot reload on port 5173.
 
 ---
 

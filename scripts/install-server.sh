@@ -402,6 +402,23 @@ if [[ -f data/config.yaml.example && ! -f data/config.yaml ]]; then
     cp data/config.yaml.example data/config.yaml
 fi
 
+# --- desktop SPA bundle --------------------------------------------------
+# Build the frontend unconditionally on every install / upgrade. The bundle
+# is not committed to git (static/desktop/ is gitignored) so this is the
+# only step that produces it. Skipping or making this conditional would
+# leave new installs with no UI. ~50s on a Pi; essentially free on a laptop.
+
+if command -v npm >/dev/null 2>&1; then
+    log "building desktop SPA (cd desktop && npm install && npm run build)"
+    (cd "$INSTALL_DIR/desktop" && npm install --silent && npm run build) \
+        || die "desktop SPA build failed — see output above"
+    log "desktop bundle built into static/desktop/"
+else
+    warn "npm not found on PATH — desktop UI bundle was not built"
+    warn "  install Node.js (>=22), then run: cd desktop && npm install && npm run build"
+    warn "  see: https://nodejs.org/en/download"
+fi
+
 # --- qmd.service install -------------------------------------------------
 
 have_root_or_sudo() {
