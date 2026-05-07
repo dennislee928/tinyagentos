@@ -36,9 +36,15 @@ export function createBackendStatus(opts: Options): BackendStatusController {
   let reconnectingSince: number | null = null;
   let attemptIndex = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
+  let longReconnectingNotified = false;
   const subscribers = new Set<() => void>();
 
-  const notify = () => subscribers.forEach((cb) => cb());
+  // Bug 2 fix: wrap each subscriber in try/catch so a throwing subscriber
+  // does not poison sibling subscribers or the surrounding poll logic.
+  const notify = () => subscribers.forEach((cb) => {
+    try { cb(); } catch (err) { console.warn("[backendStatus] subscriber threw:", err); }
+  });
 
   const setStatus = (s: BackendStatus) => {
     if (status === s) return;
@@ -48,6 +54,8 @@ export function createBackendStatus(opts: Options): BackendStatusController {
     } else if (s === "up") {
       reconnectingSince = null;
       attemptIndex = 0;
+      // Bug 3 fix: reset the latch when we leave reconnecting.
+      longReconnectingNotified = false;
     }
     notify();
   };
@@ -57,14 +65,21 @@ export function createBackendStatus(opts: Options): BackendStatusController {
     return POLL_DELAYS_MS[i];
   };
 
+  // Bug 1 fix: guard schedule() with stopped flag so a mid-flight poll's
+  // finally clause cannot re-arm the timer after stop() was called.
   const schedule = () => {
+    if (stopped) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(poll, nextDelay());
   };
 
   const poll = async () => {
     try {
-      const r = await fetchImpl(opts.healthUrl, { credentials: "include" });
+      // Bug 4 fix: 5-second fetch timeout so a hung backend doesn't wedge.
+      const r = await fetchImpl(opts.healthUrl, {
+        credentials: "include",
+        signal: AbortSignal.timeout(5000),
+      });
       if (r.ok) {
         const v = r.headers.get("X-Taos-Version");
         if (v && VERSION_PATTERN.test(v)) {
@@ -83,11 +98,13 @@ export function createBackendStatus(opts: Options): BackendStatusController {
       setStatus("reconnecting");
       attemptIndex += 1;
     } finally {
-      // Long-reconnecting subscribers (banner copy switch) need a notify
-      // shortly after the threshold even if status didn't change.
-      if (status === "reconnecting" && reconnectingSince !== null) {
+      // Bug 3 fix: notify exactly once when crossing the 60s threshold.
+      if (status === "reconnecting" && reconnectingSince !== null && !longReconnectingNotified) {
         const elapsed = Date.now() - reconnectingSince;
-        if (elapsed >= LONG_RECONNECTING_MS) notify();
+        if (elapsed >= LONG_RECONNECTING_MS) {
+          longReconnectingNotified = true;
+          notify();
+        }
       }
       schedule();
     }
@@ -105,15 +122,21 @@ export function createBackendStatus(opts: Options): BackendStatusController {
         notify();
       }
     },
+    // Cleanup #5: wrap the delete return value explicitly.
     subscribe(cb) {
       subscribers.add(cb);
-      return () => subscribers.delete(cb);
+      return () => { subscribers.delete(cb); };
     },
     start() {
+      // Bug 1 fix: reset stopped so schedule() is allowed to arm the timer.
+      stopped = false;
       if (timer) return;
       schedule();
     },
     stop() {
+      // Bug 1 fix: set stopped before clearing the timer so a mid-flight
+      // poll's finally clause sees it and skips re-arming.
+      stopped = true;
       if (timer) {
         clearTimeout(timer);
         timer = null;

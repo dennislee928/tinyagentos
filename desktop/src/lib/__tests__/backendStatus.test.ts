@@ -100,4 +100,55 @@ describe("backendStatus", () => {
     bs.reportVersion("");
     expect(bs.getCurrentVersion()).toBe("1.0.0-rc.1+build.7"); // unchanged
   });
+
+  it("stop() prevents the next poll from being scheduled even mid-flight", async () => {
+    let resolveFetch: (() => void) | null = null;
+    const fetchMock = vi.fn().mockImplementation(
+      () => new Promise<Response>((res) => { resolveFetch = () => res(new Response("{}", { status: 200 })); })
+    );
+    const bs = createBackendStatus({ healthUrl: "/api/health", fetchImpl: fetchMock });
+    bs.start();
+    await vi.advanceTimersByTimeAsync(2000);
+    // Poll is now mid-flight (fetch hasn't resolved). Stop the loop:
+    bs.stop();
+    // Resolve the in-flight fetch — schedule() inside finally must NOT re-arm.
+    resolveFetch?.();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a throwing subscriber does not affect other subscribers or status transitions", async () => {
+    // Fail once so status transitions to reconnecting (triggers notify), then succeed.
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("network"))
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+    const bs = createBackendStatus({ healthUrl: "/api/health", fetchImpl: fetchMock });
+    const good = vi.fn();
+    bs.subscribe(() => { throw new Error("boom"); });
+    bs.subscribe(good);
+    bs.start();
+    await vi.advanceTimersByTimeAsync(2000); // first poll fails → status→reconnecting → notify fires
+    expect(bs.getStatus()).toBe("reconnecting");
+    expect(good).toHaveBeenCalled();   // sibling subscriber fired despite the throw
+    expect(bs.getStatus()).toBe("reconnecting"); // throw did not corrupt the status machine
+    bs.stop();
+  });
+
+  it("notifies subscribers exactly once when crossing the 60s reconnecting threshold", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("network"));
+    const bs = createBackendStatus({ healthUrl: "/api/health", fetchImpl: fetchMock });
+    const cb = vi.fn();
+    bs.start();
+    await vi.advanceTimersByTimeAsync(2000); // first failure → notify (status change to reconnecting)
+    bs.subscribe(cb);
+    // Walk past the 60s threshold via subsequent polls:
+    await vi.advanceTimersByTimeAsync(120_000);
+    const callsAfterCross = cb.mock.calls.length;
+    expect(callsAfterCross).toBeGreaterThanOrEqual(1);
+    // Now walk another 90s — no further notifies for the long-reconnecting reason:
+    cb.mockClear();
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(cb).not.toHaveBeenCalled();
+    bs.stop();
+  });
 });
