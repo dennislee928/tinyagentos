@@ -69,6 +69,7 @@ BACKEND_TYPE_MAP = {
     "anthropic": "anthropic",
     "openrouter": "openrouter",
     "kilocode": "openai",  # kilocode is OpenAI-compatible; api_base set explicitly
+    "openai-compatible": "openai",  # user-supplied OpenAI-compatible endpoint; api_base required
 }
 
 # Chat prefix is different from the embedding prefix for ollama-compat
@@ -82,7 +83,7 @@ CHAT_BACKEND_TYPE_MAP = {
 
 # Cloud provider types that may serve multiple named models and require
 # per-model model_list entries so agents can route by exact model id.
-CLOUD_BACKEND_TYPES = {"openai", "anthropic", "openrouter", "kilocode"}
+CLOUD_BACKEND_TYPES = {"openai", "anthropic", "openrouter", "kilocode", "openai-compatible"}
 
 # Canonical alias the deployer injects into agent containers as
 # TAOS_EMBEDDING_MODEL. Agents that want an embedding call this name and
@@ -186,8 +187,8 @@ def generate_litellm_config(backends: list[dict], default_model: str = "default"
             "model": f"{prefix}/{model_name}",
         }
 
-        # Set api_base for local/self-hosted backends
-        if backend_type in ("ollama", "rkllama", "llama-cpp", "vllm", "exo", "mlx"):
+        # Set api_base for local/self-hosted backends and openai-compatible
+        if backend_type in ("ollama", "rkllama", "llama-cpp", "vllm", "exo", "mlx", "openai-compatible"):
             litellm_params["api_base"] = url
 
         # API key from secrets reference
