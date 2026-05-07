@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import sys
+from dataclasses import asdict
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -116,6 +117,33 @@ async def _do_restart(app_state) -> None:
         os.execv(sys.executable, [sys.executable] + sys.argv)
     except Exception as exc:
         await _emit_fail(str(exc))
+
+
+@router.post("/api/system/hardware/refresh")
+async def hardware_refresh(request: Request):
+    """Re-probe hardware and update the cached profile.
+
+    Useful when the user has installed new drivers or hardware (e.g. vulkan-tools)
+    and wants taOS to pick up the change without a full restart. The new logic in
+    get_hardware_profile already re-probes on every startup; this endpoint provides
+    a self-service path between restarts.
+    """
+    from tinyagentos.hardware import get_hardware_profile
+
+    data_dir = getattr(request.app.state, "data_dir", None)
+    if data_dir is None:
+        return JSONResponse({"error": "data_dir not available"}, status_code=503)
+
+    cache_path = data_dir / "hardware.json"
+    if cache_path.exists():
+        cache_path.unlink()
+
+    profile = get_hardware_profile(cache_path)
+    request.app.state.hardware_profile = profile
+
+    data = asdict(profile)
+    data["profile_id"] = profile.profile_id
+    return data
 
 
 @router.get("/api/system/restart/status")

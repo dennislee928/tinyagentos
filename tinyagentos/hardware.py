@@ -507,16 +507,16 @@ def detect_hardware() -> HardwareProfile:
     )
 
 
-CACHE_TTL_SECONDS = 86400  # Re-detect after 24h (user might add accelerator card)
-
-
 def get_hardware_profile(cache_path: Path) -> HardwareProfile:
-    """Load cached hardware profile, or detect and cache if missing/stale."""
-    if cache_path.exists():
-        import time
-        age = time.time() - cache_path.stat().st_mtime
-        if age < CACHE_TTL_SECONDS:
+    """Detect hardware on every startup. Cache is a fallback for cases where
+    detection raises (broken /sys access, unsupported platform), not the
+    primary read path. Re-probing on startup means newly-installed
+    drivers/tooling are picked up without a manual cache delete."""
+    try:
+        profile = detect_hardware()
+    except Exception:
+        if cache_path.exists():
             return HardwareProfile.load(cache_path)
-    profile = detect_hardware()
+        raise
     profile.save(cache_path)
     return profile
