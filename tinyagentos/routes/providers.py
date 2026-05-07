@@ -19,7 +19,7 @@ router = APIRouter()
 
 # Provider categories used by the UI to group entries. The backend
 # doesn't care about category for routing — it's purely display metadata.
-CLOUD_TYPES = {"openai", "anthropic", "openrouter", "kilocode"}
+CLOUD_TYPES = {"openai", "anthropic", "openrouter", "kilocode", "openai-compatible"}
 
 # Defaults applied per-type when the Add Provider form doesn't supply
 # them. Covers the case where the UI collects just api_key + name and

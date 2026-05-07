@@ -183,6 +183,7 @@ _ADAPTERS: dict[str, BackendAdapter] = {
     "anthropic": CloudAPIAdapter(),
     "openrouter": CloudAPIAdapter(),
     "kilocode": CloudAPIAdapter(),
+    "openai-compatible": CloudAPIAdapter(),
     "sd-cpp": StableDiffusionCppAdapter(),
     "rknn-sd": RknnSdAdapter(),
 }
