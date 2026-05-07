@@ -107,9 +107,15 @@ self.addEventListener("fetch", (event: FetchEvent) => {
         const network = fetch(req).then((r) => {
           if (r.ok) cache.put(cacheKey, r.clone());
           return r;
-        }).catch((): Response | undefined => hit);
+        }).catch((err) => {
+          // If we have a cached copy, fall back to it. Otherwise propagate
+          // the network error so the browser shows a normal failure rather
+          // than crashing the SW handler with an undefined Response.
+          if (hit) return hit;
+          throw err;
+        });
         if (hit) return hit;
-        return network as Promise<Response>;
+        return network;
       })
     );
     return;

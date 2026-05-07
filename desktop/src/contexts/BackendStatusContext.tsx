@@ -62,16 +62,26 @@ export function BackendStatusProvider({ children }: { children: ReactNode }) {
     });
     const unsub = bs.subscribe(refresh);
     bs.start();
-    // Light tick so secondsReconnecting updates the banner copy without
-    // waiting for the next poll callback.
-    const tick = setInterval(refresh, 1_000);
     return () => {
       unsub();
-      clearInterval(tick);
       // Intentionally do NOT call bs.stop() — the controller is a page-lifetime
       // singleton; another Provider mount may need it still polling.
     };
   }, [bs]);
+
+  // Separate effect: only run the 1s tick while reconnecting, so steady-state
+  // "up" doesn't fire a function every second forever.
+  useEffect(() => {
+    if (snap.status !== "reconnecting") return;
+    const tick = setInterval(() => {
+      setSnap((prev) => {
+        const nextSecs = bs.getSecondsReconnecting();
+        if (prev.secondsReconnecting === nextSecs) return prev;
+        return { ...prev, secondsReconnecting: nextSecs };
+      });
+    }, 1_000);
+    return () => clearInterval(tick);
+  }, [snap.status, bs]);
 
   return <Ctx.Provider value={snap}>{children}</Ctx.Provider>;
 }
