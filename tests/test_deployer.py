@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tinyagentos.deployer import deploy_agent, undeploy_agent, DeployRequest, _splice_taosmd_block
+from tinyagentos.deployer import deploy_agent, undeploy_agent, DeployRequest, _splice_taosmd_block, AGENTS_MD_PATHS
 
 
 def _req(**overrides) -> DeployRequest:
@@ -667,6 +667,88 @@ class TestDeployAgent:
         assert "<your-agent-name>" not in content, "placeholder not replaced"
         assert "<!-- taosmd:rules-begin -->" in content, "missing begin sentinel"
         assert "<!-- taosmd:rules-end -->" in content, "missing end sentinel"
+
+    @pytest.mark.asyncio
+    async def test_hermes_deploy_pushes_agents_md_with_taosmd_rules(self, tmp_path):
+        """When framework=hermes and no existing AGENTS.md, deploy pushes a
+        sentinel-wrapped file to /root/.hermes/AGENTS.md with taosmd agent_rules
+        and the agent name substituted."""
+        pushed: list[tuple[str, str]] = []
+
+        async def fake_push_file(container, src, dst):
+            try:
+                with open(src) as fh:
+                    pushed.append((dst, fh.read()))
+            except FileNotFoundError:
+                pushed.append((dst, ""))
+            return 0, ""
+
+        async def mock_exec_fn(name, cmd, **kwargs):
+            cmd_str = " ".join(cmd)
+            if "hostname -I" in cmd_str:
+                return (0, "10.0.0.98")
+            if "cat" in cmd_str and "AGENTS.md" in cmd_str:
+                return (1, "")
+            return (0, "ok")
+
+        fake_rules = "Hermes agent protocol.\nAgent: <your-agent-name>"
+
+        with patch("tinyagentos.deployer.create_container", new_callable=AsyncMock) as mock_create, \
+             patch("tinyagentos.deployer.exec_in_container", side_effect=mock_exec_fn), \
+             patch("tinyagentos.deployer.push_file", side_effect=fake_push_file), \
+             patch("tinyagentos.deployer.add_proxy_device", new_callable=AsyncMock, return_value={"success": True, "output": ""}), \
+             patch("tinyagentos.deployer.is_image_present", new_callable=AsyncMock, return_value=False):
+            mock_create.return_value = {"success": True, "name": "taos-agent-hermestest"}
+
+            import types
+            fake_taosmd = types.ModuleType("taosmd")
+            fake_taosmd.agent_rules = lambda: fake_rules
+
+            import sys
+            sys.modules["taosmd"] = fake_taosmd
+            try:
+                req = _req(name="hermestest", framework="hermes", data_dir=tmp_path)
+                result = await deploy_agent(req)
+            finally:
+                sys.modules.pop("taosmd", None)
+
+        assert result["success"] is True
+        agents_md_entries = [(dst, content) for dst, content in pushed if dst == "/root/.hermes/AGENTS.md"]
+        assert agents_md_entries, "AGENTS.md was not pushed to /root/.hermes/AGENTS.md"
+        _dst, content = agents_md_entries[0]
+        assert "hermestest" in content, "agent slug not substituted in AGENTS.md"
+        assert "Hermes agent protocol" in content, "expected taosmd rules phrase in AGENTS.md"
+        assert "<your-agent-name>" not in content, "placeholder not replaced"
+        assert "<!-- taosmd:rules-begin -->" in content, "missing begin sentinel"
+        assert "<!-- taosmd:rules-end -->" in content, "missing end sentinel"
+
+    @pytest.mark.asyncio
+    async def test_unknown_framework_does_not_push_agents_md(self, tmp_path):
+        """A framework not in AGENTS_MD_PATHS must not trigger AGENTS.md injection."""
+        pushed_dsts: list[str] = []
+
+        async def fake_push_file(container, src, dst):
+            pushed_dsts.append(dst)
+            return 0, ""
+
+        async def mock_exec_fn(name, cmd, **kwargs):
+            cmd_str = " ".join(cmd)
+            if "hostname -I" in cmd_str:
+                return (0, "10.0.0.97")
+            return (0, "ok")
+
+        with patch("tinyagentos.deployer.create_container", new_callable=AsyncMock) as mock_create, \
+             patch("tinyagentos.deployer.exec_in_container", side_effect=mock_exec_fn), \
+             patch("tinyagentos.deployer.push_file", side_effect=fake_push_file), \
+             patch("tinyagentos.deployer.add_proxy_device", new_callable=AsyncMock, return_value={"success": True, "output": ""}):
+            mock_create.return_value = {"success": True, "name": "taos-agent-unknown-fw"}
+            req = _req(name="unknown-fw", framework="hermes_typo", data_dir=tmp_path)
+            result = await deploy_agent(req)
+
+        assert result["success"] is True
+        assert "hermes_typo" not in AGENTS_MD_PATHS
+        agents_md_pushes = [d for d in pushed_dsts if "AGENTS.md" in d]
+        assert not agents_md_pushes, f"AGENTS.md should not be pushed for unknown framework, got: {agents_md_pushes}"
 
     @pytest.mark.asyncio
     async def test_bridge_url_injected_into_env(self, tmp_path):
