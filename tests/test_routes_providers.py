@@ -257,3 +257,37 @@ class TestModelsPassthrough:
         assert refresh_mock.await_count == 1
         called_backend = refresh_mock.await_args.args[1]
         assert called_backend.get("name") == "kilo-patch-target"
+
+    async def test_add_local_provider_with_api_key_secret(self, client, app):
+        """A local provider (llama-cpp) can be created with api_key_secret and
+        the secret name is persisted in the config — backend does not block it."""
+        resp = await client.post("/api/providers", json={
+            "name": "llama-with-key",
+            "type": "llama-cpp",
+            "url": "http://localhost:8080",
+            "api_key_secret": "provider-llama-with-key-key",
+        })
+        assert resp.status_code == 200
+        stored = next(
+            b for b in app.state.config.backends
+            if b.get("name") == "llama-with-key"
+        )
+        assert stored["api_key_secret"] == "provider-llama-with-key-key"
+
+    async def test_add_openai_compatible_provider_with_custom_url(self, client, app):
+        """An openai-compatible provider can be created with a caller-supplied
+        URL; no URL autofill applies since there is no canonical endpoint."""
+        custom_url = "http://192.168.1.50:8000/v1"
+        resp = await client.post("/api/providers", json={
+            "name": "my-litellm",
+            "type": "openai-compatible",
+            "url": custom_url,
+            "api_key_secret": "provider-my-litellm-key",
+        })
+        assert resp.status_code == 200
+        stored = next(
+            b for b in app.state.config.backends
+            if b.get("name") == "my-litellm"
+        )
+        assert stored["url"] == custom_url
+        assert stored["api_key_secret"] == "provider-my-litellm-key"

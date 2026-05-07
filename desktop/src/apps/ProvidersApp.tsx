@@ -16,7 +16,7 @@ import { useIsMobile } from "@/hooks/use-is-mobile";
 /*  Constants — matches VALID_BACKEND_TYPES in tinyagentos/config.py  */
 /* ------------------------------------------------------------------ */
 
-const CLOUD_TYPES = ["openai", "anthropic", "openrouter", "kilocode"] as const;
+const CLOUD_TYPES = ["openai", "anthropic", "openrouter", "kilocode", "openai-compatible"] as const;
 const LOCAL_TYPES = ["rkllama", "ollama", "llama-cpp", "vllm", "exo", "mlx"] as const;
 type ProviderType = typeof CLOUD_TYPES[number] | typeof LOCAL_TYPES[number];
 
@@ -62,6 +62,12 @@ const CLOUD_PROVIDER_META: Record<string, CloudProviderMeta> = {
     description: "500+ models, smart routing",
     url: "https://api.kilo.ai/api/gateway",
     keyPlaceholder: "kilo-...",
+  },
+  "openai-compatible": {
+    label: "OpenAI-Compatible",
+    description: "LiteLLM, llama.cpp server, vLLM, or any service exposing the OpenAI API",
+    url: "",
+    keyPlaceholder: "your-api-key",
   },
 };
 
@@ -519,14 +525,24 @@ function ProviderForm({
                 />
               </div>
 
-              {/* Cloud: read-only URL chip */}
+              {/* Cloud: read-only URL chip (fixed providers) or editable input (openai-compatible) */}
               {category === "cloud" && cloudMeta && !isEdit && (
                 <div className="space-y-1.5">
-                  <Label>API Endpoint</Label>
-                  <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-                    <ExternalLink size={11} className="text-shell-text-tertiary shrink-0" />
-                    <code className="text-[11px] text-shell-text-tertiary font-mono truncate">{cloudMeta.url}</code>
-                  </div>
+                  <Label htmlFor={form.type === "openai-compatible" ? "prov-url" : undefined}>API Endpoint</Label>
+                  {form.type === "openai-compatible" ? (
+                    <Input
+                      id="prov-url"
+                      type="url"
+                      value={form.url}
+                      onChange={(e) => setField("url", e.target.value)}
+                      placeholder="http://localhost:8000/v1"
+                    />
+                  ) : (
+                    <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                      <ExternalLink size={11} className="text-shell-text-tertiary shrink-0" />
+                      <code className="text-[11px] text-shell-text-tertiary font-mono truncate">{cloudMeta.url}</code>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -571,25 +587,29 @@ function ProviderForm({
                 </div>
               )}
 
-              {/* API Key (cloud only) */}
-              {isCloud(form.type) && (
-                <div className="space-y-1.5">
-                  <Label htmlFor="prov-apikey">
-                    API Key{isEdit && " (leave blank to keep existing)"}
-                  </Label>
-                  <Input
-                    id="prov-apikey"
-                    type="password"
-                    value={form.apiKey}
-                    onChange={(e) => setField("apiKey", e.target.value)}
-                    placeholder={isEdit ? "••••••••" : (cloudMeta?.keyPlaceholder ?? "sk-...")}
-                    className="font-mono"
-                  />
-                  <p className="text-[10px] text-shell-text-tertiary">
-                    Saved as <code>provider-{form.name || "{name}"}-key</code>
-                  </p>
-                </div>
-              )}
+              {/* API Key — required for cloud, optional for local */}
+              <div className="space-y-1.5">
+                <Label htmlFor="prov-apikey">
+                  {isCloud(form.type)
+                    ? `API Key${isEdit ? " (leave blank to keep existing)" : ""}`
+                    : `API Key${isEdit ? " (leave blank to keep existing)" : " (optional)"}`}
+                </Label>
+                <Input
+                  id="prov-apikey"
+                  type="password"
+                  value={form.apiKey}
+                  onChange={(e) => setField("apiKey", e.target.value)}
+                  placeholder={isEdit ? "••••••••" : (cloudMeta?.keyPlaceholder ?? "sk-...")}
+                  className="font-mono"
+                />
+                <p className="text-[10px] text-shell-text-tertiary">
+                  {!isCloud(form.type) && !isEdit && form.type === "ollama"
+                    ? "Ollama has no built-in auth — leave blank unless you've configured a reverse proxy with a key"
+                    : !isCloud(form.type) && !isEdit
+                    ? "Leave blank if your server has no authentication configured"
+                    : <>Saved as <code>provider-{form.name || "{name}"}-key</code></>}
+                </p>
+              </div>
 
               {/* Priority */}
               <div className="space-y-1.5">
