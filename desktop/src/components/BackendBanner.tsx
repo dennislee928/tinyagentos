@@ -1,0 +1,45 @@
+/**
+ * Top-of-viewport banner shown while the backend is unreachable.
+ *
+ * Copy is deliberately non-technical:
+ *   - first 60s: "taOS is restarting…"
+ *   - after 60s: "taOS is taking longer than usual." + [Refresh page]
+ *
+ * Hidden when status === "up". Has aria-live so screen readers announce
+ * the state change without the user needing focus to be in the banner.
+ */
+import { Loader2, RefreshCw } from "lucide-react";
+import { useBackendStatus } from "@/contexts/BackendStatusContext";
+
+const LONG_THRESHOLD_S = 60;
+
+export function BackendBanner() {
+  const { status, secondsReconnecting } = useBackendStatus();
+  if (status === "up") return null;
+
+  const taking_long = secondsReconnecting >= LONG_THRESHOLD_S;
+  const message = taking_long
+    ? "taOS is taking longer than usual."
+    : "taOS is restarting…";
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed top-0 left-0 right-0 z-[9999] flex items-center justify-center gap-3 bg-amber-500/95 px-4 py-2 text-sm font-medium text-amber-950 shadow-md"
+    >
+      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+      <span>{message}</span>
+      {taking_long && (
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="ml-3 inline-flex items-center gap-1.5 rounded bg-amber-950/15 px-2.5 py-1 text-xs font-semibold hover:bg-amber-950/25"
+        >
+          <RefreshCw className="h-3 w-3" aria-hidden="true" />
+          Refresh page
+        </button>
+      )}
+    </div>
+  );
+}
