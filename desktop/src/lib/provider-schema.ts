@@ -15,6 +15,7 @@ export interface ProviderTypeSpec {
   default_url: string;
   key_placeholder: string;
   litellm_prefix: string;
+  requires_api_key: boolean;
 }
 
 let cache: ProviderTypeSpec[] | null = null;

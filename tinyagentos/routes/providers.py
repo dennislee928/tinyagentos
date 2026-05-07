@@ -73,10 +73,10 @@ async def _discover_provider_models(
     """Probe ``{base_url}/models`` for an OpenAI-shaped model list.
 
     Returns a list of ``{"id": ...}`` dicts on success, empty list on any
-    failure. Works for openai, anthropic, openrouter, kilocode — they all
-    expose an OpenAI-compatible models endpoint that returns
-    ``{"data": [{"id": "..."}]}``. Provider-agnostic: no per-type branching
-    so a new cloud provider with the same shape just works.
+    failure. Works for openai, anthropic, openrouter, kilocode, and
+    openai-compatible — they all expose an OpenAI-compatible models endpoint
+    that returns ``{"data": [{"id": "..."}]}``. Provider-agnostic: no
+    per-type branching so a new cloud provider with the same shape just works.
     """
     url = f"{base_url.rstrip('/')}/models"
     headers = {}

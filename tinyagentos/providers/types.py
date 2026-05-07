@@ -26,6 +26,7 @@ class ProviderTypeSpec:
     litellm_prefix: str = "openai"  # LiteLLM model-prefix this routes through
     adapter_class: str = "CloudAPIAdapter"  # name of the adapter class in backend_adapters.py
     litellm_chat_prefix: Optional[str] = None  # override for chat dispatcher; falls back to litellm_prefix
+    requires_api_key: bool = True             # False → UI shows key as optional
 
     @property
     def chat_prefix(self) -> str:
@@ -54,39 +55,46 @@ _PROVIDERS: tuple[ProviderTypeSpec, ...] = (
     ProviderTypeSpec(id="openai-compatible", category="cloud", label="OpenAI-Compatible",
         description="LiteLLM, llama.cpp server, vLLM, or any service exposing the OpenAI API",
         default_url="", key_placeholder="your-api-key",
-        litellm_prefix="openai", adapter_class="CloudAPIAdapter"),
+        litellm_prefix="openai", adapter_class="CloudAPIAdapter",
+        requires_api_key=False),
     # Local
     ProviderTypeSpec(id="rkllama", category="local", label="rkllama",
         description="Rockchip RK35xx NPU runtime",
         default_url="http://localhost:8080",
         litellm_prefix="ollama", adapter_class="OllamaCompatAdapter",
-        litellm_chat_prefix="ollama_chat"),
+        litellm_chat_prefix="ollama_chat", requires_api_key=False),
     ProviderTypeSpec(id="ollama", category="local", label="Ollama",
         description="Local LLM runtime",
         default_url="http://localhost:11434",
         litellm_prefix="ollama", adapter_class="OllamaCompatAdapter",
-        litellm_chat_prefix="ollama_chat"),
+        litellm_chat_prefix="ollama_chat", requires_api_key=False),
     ProviderTypeSpec(id="llama-cpp", category="local", label="llama.cpp",
         description="C++ inference server for GGUF models",
         default_url="http://localhost:8080",
-        litellm_prefix="openai", adapter_class="OpenAICompatAdapter"),
+        litellm_prefix="openai", adapter_class="OpenAICompatAdapter",
+        requires_api_key=False),
     ProviderTypeSpec(id="vllm", category="local", label="vLLM",
         description="High-throughput inference server",
         default_url="http://localhost:8000",
-        litellm_prefix="openai", adapter_class="OpenAICompatAdapter"),
+        litellm_prefix="openai", adapter_class="OpenAICompatAdapter",
+        requires_api_key=False),
     ProviderTypeSpec(id="exo", category="local", label="EXO",
         description="Distributed inference cluster",
-        litellm_prefix="openai", adapter_class="OpenAICompatAdapter"),
+        litellm_prefix="openai", adapter_class="OpenAICompatAdapter",
+        requires_api_key=False),
     ProviderTypeSpec(id="mlx", category="local", label="MLX",
         description="Apple Silicon native runtime",
-        litellm_prefix="openai", adapter_class="OpenAICompatAdapter"),
+        litellm_prefix="openai", adapter_class="OpenAICompatAdapter",
+        requires_api_key=False),
     # NOTE: sd-cpp and rknn-sd were in VALID_BACKEND_TYPES — keep them so we don't regress
     ProviderTypeSpec(id="sd-cpp", category="local", label="stable-diffusion.cpp",
         description="C++ stable-diffusion runtime",
-        litellm_prefix="openai", adapter_class="StableDiffusionCppAdapter"),
+        litellm_prefix="openai", adapter_class="StableDiffusionCppAdapter",
+        requires_api_key=False),
     ProviderTypeSpec(id="rknn-sd", category="local", label="rknn-sd",
         description="Rockchip NPU stable-diffusion",
-        litellm_prefix="openai", adapter_class="RknnSdAdapter"),
+        litellm_prefix="openai", adapter_class="RknnSdAdapter",
+        requires_api_key=False),
 )
 
 

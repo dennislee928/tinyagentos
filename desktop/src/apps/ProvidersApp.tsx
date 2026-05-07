@@ -348,6 +348,8 @@ function ProviderForm({
 
   const canSave = (isEdit || testResult?.reachable === true || forceEnabled) && form.name.trim().length > 0;
   const cloudMeta = schema.find((p) => p.id === form.type && p.category === "cloud") ?? null;
+  const formSpec = schema.find((p) => p.id === form.type) ?? null;
+  const keyRequired = formSpec?.requires_api_key ?? isCloudType(form.type, schema);
 
   return (
     <div
@@ -551,10 +553,10 @@ function ProviderForm({
                 </div>
               )}
 
-              {/* API Key — required for cloud, optional for local */}
+              {/* API Key — required when requires_api_key=true, optional otherwise */}
               <div className="space-y-1.5">
                 <Label htmlFor="prov-apikey">
-                  {isCloudType(form.type, schema)
+                  {keyRequired
                     ? `API Key${isEdit ? " (leave blank to keep existing)" : ""}`
                     : `API Key${isEdit ? " (leave blank to keep existing)" : " (optional)"}`}
                 </Label>
@@ -567,9 +569,9 @@ function ProviderForm({
                   className="font-mono"
                 />
                 <p className="text-[10px] text-shell-text-tertiary">
-                  {!isCloudType(form.type, schema) && !isEdit && form.type === "ollama"
+                  {!keyRequired && !isEdit && form.type === "ollama"
                     ? "Ollama has no built-in auth — leave blank unless you've configured a reverse proxy with a key"
-                    : !isCloudType(form.type, schema) && !isEdit
+                    : !keyRequired && !isEdit
                     ? "Leave blank if your server has no authentication configured"
                     : <>Saved as <code>provider-{form.name || "{name}"}-key</code></>}
                 </p>
