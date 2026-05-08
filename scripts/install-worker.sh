@@ -159,13 +159,18 @@ create_btrfs_loopback() {
     cap_gb=$(( cap_bytes / 1024**3 ))
     [[ "$cap_gb" -lt 5 ]] && cap_gb=5
     log "creating btrfs storage pool 'taos-worker-pool' (${cap_gb}GB)"
-    sudo incus storage create taos-worker-pool btrfs "size=${cap_gb}GB"
+    # `incus storage create` accepts YAML config from stdin. When this
+    # script runs via `curl | sudo bash`, stdin is the rest of the curl
+    # pipe — incus tries to parse the script body as a StoragePoolPut
+    # and dies with "yaml: unmarshal errors". Same trick as `incus
+    # launch` below.
+    sudo incus storage create taos-worker-pool btrfs "size=${cap_gb}GB" < /dev/null
 }
 
 launch_worker_lxc() {
     if sudo incus list --format=csv -c n 2>/dev/null | grep -q '^taos-worker$'; then
         log "worker LXC 'taos-worker' already exists; reusing"
-        sudo incus start taos-worker 2>/dev/null || true
+        sudo incus start taos-worker 2>/dev/null </dev/null || true
         return 0
     fi
     log "launching taos-worker (Ubuntu 24.04, privileged, nesting)"
@@ -178,7 +183,7 @@ launch_worker_lxc() {
         --config security.nesting=true < /dev/null
     log "waiting for taos-worker to come up..."
     for _i in $(seq 1 30); do
-        if sudo incus exec taos-worker -- true 2>/dev/null; then
+        if sudo incus exec taos-worker -- true </dev/null 2>/dev/null; then
             log "taos-worker reachable"
             return 0
         fi
@@ -207,7 +212,8 @@ phase1_host_prep() {
     # specific message about needing 'incus admin init'. On a usable incus
     # it returns the (possibly empty) storage table cleanly.
     if ! sudo incus storage list >/dev/null 2>&1; then
-        sudo incus admin init --minimal
+        # Same stdin-slurp guard as create_btrfs_loopback / launch_worker_lxc.
+        sudo incus admin init --minimal </dev/null
     fi
     create_btrfs_loopback
     launch_worker_lxc
@@ -238,13 +244,16 @@ setup_port_forward() {
 
 reexec_into_worker_lxc() {
     log "re-execing install-worker.sh inside taos-worker for phase 2"
+    # </dev/null on `incus exec` so the inner bash doesn't pull from
+    # the outer curl pipe — same root cause as the storage/launch fixes
+    # in this file.
     sudo incus exec taos-worker -- bash -c "
         set -e
         export TAOS_INSIDE_WORKER=1
         export TAOS_CONTROLLER_URL='${CONTROLLER_URL}'
         export TAOS_WORKER_NAME='${WORKER_NAME}'
         curl -sL '${REPO}/raw/${BRANCH}/scripts/install-worker.sh' | bash -s -- '${CONTROLLER_URL}'
-    "
+    " </dev/null
 }
 
 # --- incus install + controller enrollment --------------------------------
@@ -343,13 +352,13 @@ install_and_enroll_incus() {
         log "incus HTTPS listener already set to :8443"
     else
         log "enabling incus HTTPS listener on :8443"
-        $sg_incus "incus config set core.https_address :8443"
+        $sg_incus "incus config set core.https_address :8443 < /dev/null"
     fi
 
     # ── 5. Generate a one-shot trust token ─────────────────────────────
     log "generating incus trust token for controller enrollment"
     local token_output
-    token_output="$($sg_incus "incus config trust add controller-enroll" 2>&1)"
+    token_output="$($sg_incus "incus config trust add controller-enroll < /dev/null" 2>&1)"
     # The token is the last non-empty line of the output
     local TOKEN
     TOKEN="$(echo "$token_output" | awk 'NF{last=$0} END{print last}')"
