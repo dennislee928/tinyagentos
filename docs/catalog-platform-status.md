@@ -37,7 +37,8 @@ this doc records what's actually verified working.
 | `llama-cpp` | 🔧 | 🔧 | 🔧 | 🔧 | 🔧 | 🔧 | catalog entry; install path not yet wired |
 | `vllm` | ❌ | ❌ | ❌ | 🔧 | ❌ | 🔧 | x86 GPU only; not yet wired |
 | `mlx` | ❌ | ❌ | ⏳ | ❌ | ❌ | ❌ | declared in tiers; no apps point at it yet |
-| `mlc-llm` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | not in catalog yet (Pack 9) |
+| `mlc-llm` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | manifest in catalog (#418, type: service, backend: openai-compatible); MLC-format model variants need the multi-file HF installer (#440) before any concrete install path is verified |
+| `openllm` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | manifest in catalog (#439, BentoML, pip install); install path generic — not smoke-tested per tier |
 
 ## LLM models — rkllm format (Pi NPU)
 
