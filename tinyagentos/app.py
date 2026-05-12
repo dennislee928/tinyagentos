@@ -401,6 +401,14 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
         app.state.ingest_pipeline = knowledge_ingest
         app.state.knowledge_monitor = knowledge_monitor
         await knowledge_monitor.start()
+        try:
+            from tinyagentos.knowledge_monitor import ingest_agent_docs
+            docs_root = PROJECT_DIR / "docs" / "agents"
+            await ingest_agent_docs(docs_dir=docs_root, knowledge_store=knowledge_store)
+        except Exception:
+            logger.exception(
+                "agent-docs ingest failed — taos agent will fall back to local files"
+            )
         await agent_browsers.init()
         app.state.agent_browsers = agent_browsers
         await browsing_history.init()

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import httpx
+    from pathlib import Path
     from tinyagentos.knowledge_store import KnowledgeStore
 
 logger = logging.getLogger(__name__)
@@ -183,3 +184,51 @@ class MonitorService:
         except Exception as exc:
             logger.warning("Article re-fetch failed for %s: %s", item["source_url"], exc)
             return "", False
+
+
+async def ingest_agent_docs(
+    *,
+    docs_dir: "Path",
+    knowledge_store: "KnowledgeStore",
+) -> int:
+    """Walk ``docs_dir`` for ``*.md`` files and (re-)ingest them into the
+    knowledge store with ``source_type='agent-docs'`` and ``categories=['agent-docs']``.
+
+    Idempotent: every call first deletes all existing agent-docs entries
+    then re-adds the current contents, so updates land cleanly. Returns the
+    number of files ingested. Returns 0 if ``docs_dir`` doesn't exist.
+    """
+    if not docs_dir.exists():
+        return 0
+
+    # Wipe prior agent-docs entries so updates are clean.
+    existing = await knowledge_store.list_items(source_type="agent-docs", limit=1000)
+    for item in existing:
+        await knowledge_store.delete_item(item["id"])
+
+    count = 0
+    for md_file in sorted(docs_dir.rglob("*.md")):
+        rel_path = str(md_file.relative_to(docs_dir))
+        content = md_file.read_text(encoding="utf-8")
+        # Title = first H1 line if present, else filename
+        title = md_file.name
+        for line in content.splitlines():
+            line = line.strip()
+            if line.startswith("# "):
+                title = line[2:].strip()
+                break
+        summary = content[:200].strip()
+        await knowledge_store.add_item(
+            source_type="agent-docs",
+            source_url=rel_path,
+            title=title,
+            author="taOS docs",
+            content=content,
+            summary=summary,
+            categories=["agent-docs"],
+            tags=[],
+            metadata={"source": "docs/agents"},
+            status="ready",
+        )
+        count += 1
+    return count
