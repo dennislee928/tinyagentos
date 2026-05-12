@@ -192,6 +192,16 @@ async def add_agent(request: Request, body: AgentCreate):
     appended until it's unique. A 409 is never returned here — duplicates
     are resolved automatically via the suffix strategy.
     """
+    idempotency_key = request.headers.get("idempotency-key")
+    user_id = getattr(request.state, "user_id", "default")
+    cache = request.app.state.idempotency_cache
+    if idempotency_key:
+        cached = await cache.get(
+            key=idempotency_key, endpoint="POST /api/agents", user_id=user_id
+        )
+        if cached is not None:
+            return cached
+
     config = request.app.state.config
     display_name = body.name.strip()
     name_error = validate_agent_name(display_name)
@@ -224,7 +234,12 @@ async def add_agent(request: Request, body: AgentCreate):
     agent["display_name"] = display_name
     config.agents.append(agent)
     await save_config_locked(config, config.config_path)
-    return {"status": "created", "name": unique_slug, "display_name": display_name}
+    result = {"status": "created", "name": unique_slug, "display_name": display_name}
+    if idempotency_key:
+        await cache.set(
+            key=idempotency_key, endpoint="POST /api/agents", user_id=user_id, value=result
+        )
+    return result
 
 
 @router.put(
@@ -689,6 +704,16 @@ async def deploy_agent_endpoint(request: Request, body: DeployAgentRequest):
        We never silently retarget a pinned deploy.
     6. Model not found anywhere in the cluster — 404.
     """
+    deploy_idem_key = request.headers.get("idempotency-key")
+    deploy_user_id = getattr(request.state, "user_id", "default")
+    deploy_cache = request.app.state.idempotency_cache
+    if deploy_idem_key:
+        deploy_cached = await deploy_cache.get(
+            key=deploy_idem_key, endpoint="POST /api/agents/deploy", user_id=deploy_user_id
+        )
+        if deploy_cached is not None:
+            return deploy_cached
+
     config = request.app.state.config
     display_name = body.name.strip()
     name_error = validate_agent_name(display_name)
@@ -1010,7 +1035,12 @@ async def deploy_agent_endpoint(request: Request, body: DeployAgentRequest):
             logger.exception("archive smoke-check failed for %s", unique_slug)
             smoke_ok = False
 
-    return {"status": "deploying", "name": body.name, "archive_smoke_ok": smoke_ok}
+    deploy_result = {"status": "deploying", "name": body.name, "archive_smoke_ok": smoke_ok}
+    if deploy_idem_key:
+        await deploy_cache.set(
+            key=deploy_idem_key, endpoint="POST /api/agents/deploy", user_id=deploy_user_id, value=deploy_result
+        )
+    return deploy_result
 
 
 @router.post(

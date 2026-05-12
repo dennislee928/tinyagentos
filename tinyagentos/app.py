@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from tinyagentos.errors import error_response as _canonical_error_response
+from tinyagentos.idempotency import IdempotencyCache
 
 
 class _CacheAwareStaticFiles(StaticFiles):
@@ -998,6 +999,7 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
     app.state.project_canvas_store = project_canvas_store
     app.state.beads_bridge = None
     app.state.canvas_snapshotter = None
+    app.state.idempotency_cache = IdempotencyCache()
     projects_root.mkdir(parents=True, exist_ok=True)
     app.state.projects_root = projects_root
     app.state.chat_hub = chat_hub
