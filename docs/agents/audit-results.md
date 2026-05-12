@@ -21,7 +21,7 @@ Per-endpoint pass/fail against the agent-friendliness checklist
 | POST /api/agents/deploy | _pending_ | _pending_ | ✅ | ✅ | _pending_ | ✅ | N/A | _pending_ | Add Idempotency-Key support (Task 12) |
 | POST /api/agents/{name}/token/issue | ✅ | ✅ | ✅ | ✅ | _pending_ | N/A | N/A | ✅ | Returns plaintext once (Task 6 ✅) |
 | DELETE /api/agents/{name}/token | ✅ | ✅ | ✅ | ✅ | _pending_ | N/A | N/A | ✅ | Cascade on agent delete (Task 7 ✅) |
-| GET /api | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | N/A | N/A | _pending_ | Discovery index — new endpoint (Task 13) |
+| GET /api | ✅ | ✅ | ✅ | N/A | _pending_ | N/A | ✅ | ✅ | Discovery index — new endpoint (Task 13 ✅) |
 | POST /api/ui/notify | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | N/A | _pending_ | First agent-to-UI primitive (Task 15) |
 
 ## Remediations
