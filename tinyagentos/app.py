@@ -89,6 +89,7 @@ from tinyagentos.knowledge_ingest import IngestPipeline
 from tinyagentos.knowledge_categories import CategoryEngine
 from tinyagentos.knowledge_monitor import MonitorService
 from tinyagentos.mcp import MCPServerStore, MCPSupervisor
+from tinyagentos.stores.agent_tokens_store import AgentTokensStore
 from tinyagentos.frameworks import FRAMEWORKS, FrameworkManifestError, validate_framework_manifest
 
 PROJECT_DIR = Path(__file__).parent.parent
@@ -245,6 +246,7 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
     benchmark_store = BenchmarkStore(data_dir / "benchmarks.db")
     score_cache = ScoreCache(benchmark_store, poll_interval_seconds=15.0)
     scheduler_history_store = HistoryStore(data_dir / "scheduler_history.db")
+    agent_tokens_store = AgentTokensStore(data_dir / "agent_tokens.db")
 
     async def _probe_backend(backend: dict) -> dict:
         return await check_backend_health(http_client, backend)
@@ -372,6 +374,7 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
         await skills.init()
         await knowledge_store.init()
         await mcp_store.init()
+        await agent_tokens_store.init()
         mcp_supervisor = MCPSupervisor(mcp_store, catalog=registry, notif_store=notif_store, secrets_store=secrets_store)
         app.state.mcp_store = mcp_store
         app.state.mcp_supervisor = mcp_supervisor
@@ -904,6 +907,7 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
         await secrets_store.close()
         await notif_store.close()
         await metrics_store.close()
+        await agent_tokens_store.close()
         await qmd_client.close()
         await http_client.aclose()
 
@@ -929,6 +933,7 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
     app.state.agent_memory_dir.mkdir(parents=True, exist_ok=True)
     app.state.metrics = metrics_store
     app.state.notifications = notif_store
+    app.state.agent_tokens_store = agent_tokens_store
     app.state.qmd_client = qmd_client
     app.state.http_client = http_client
     app.state.download_manager = download_manager
