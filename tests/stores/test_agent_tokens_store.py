@@ -45,3 +45,38 @@ async def test_issue_revokes_previous_token_atomically(store):
     assert row_b["revoked_at"] is None
     looked_up_old = await store.lookup_by_plaintext(plaintext_a)
     assert looked_up_old is None
+
+
+@pytest.mark.asyncio
+async def test_revoke_for_agent_marks_revoked(store):
+    plaintext, _ = await store.issue(agent_id="a", user_id="u", scope=["*"])
+    revoked = await store.revoke_for_agent("a")
+    assert revoked == 1
+    assert await store.lookup_by_plaintext(plaintext) is None
+
+
+@pytest.mark.asyncio
+async def test_revoke_for_agent_returns_zero_when_no_active_token(store):
+    revoked = await store.revoke_for_agent("nonexistent")
+    assert revoked == 0
+
+
+@pytest.mark.asyncio
+async def test_has_token_returns_true_when_active(store):
+    await store.issue(agent_id="a", user_id="u", scope=["*"])
+    assert await store.has_token("a") is True
+
+
+@pytest.mark.asyncio
+async def test_has_token_returns_false_when_revoked(store):
+    await store.issue(agent_id="a", user_id="u", scope=["*"])
+    await store.revoke_for_agent("a")
+    assert await store.has_token("a") is False
+
+
+@pytest.mark.asyncio
+async def test_touch_last_used_updates_timestamp(store):
+    plaintext, _ = await store.issue(agent_id="a", user_id="u", scope=["*"])
+    await store.touch_last_used(plaintext)
+    row = await store.lookup_by_plaintext(plaintext)
+    assert row["last_used_at"] is not None

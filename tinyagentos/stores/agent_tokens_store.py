@@ -112,3 +112,52 @@ class AgentTokensStore:
                 "revoked_at": row["revoked_at"],
                 "last_used_at": row["last_used_at"],
             }
+
+    async def revoke_for_agent(self, agent_id: str) -> int:
+        """Revoke the active token (if any) for the given agent. Returns the number of rows updated (0 or 1)."""
+        async with self._lock:
+            now = _now_iso()
+            async with aiosqlite.connect(self._db_path) as db:
+                cur = await db.execute(
+                    "UPDATE agent_tokens SET revoked_at = ? WHERE agent_id = ? AND revoked_at IS NULL",
+                    (now, agent_id),
+                )
+                await db.commit()
+                return cur.rowcount
+
+    async def has_token(self, agent_id: str) -> bool:
+        """True if the agent has an active (non-revoked) token."""
+        async with aiosqlite.connect(self._db_path) as db:
+            cur = await db.execute(
+                "SELECT 1 FROM agent_tokens WHERE agent_id = ? AND revoked_at IS NULL LIMIT 1",
+                (agent_id,),
+            )
+            row = await cur.fetchone()
+            return row is not None
+
+    async def touch_last_used(self, plaintext: str) -> None:
+        """Record that this token was just used. Best-effort — failures are non-fatal."""
+        token_hash = _hash(plaintext)
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                "UPDATE agent_tokens SET last_used_at = ? WHERE token_hash = ?",
+                (_now_iso(), token_hash),
+            )
+            await db.commit()
+
+    async def get_metadata(self, agent_id: str) -> dict[str, Any] | None:
+        """Return non-secret token metadata for the agent (has_token, issued_at). Returns None if no active token."""
+        async with aiosqlite.connect(self._db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                "SELECT issued_at, last_used_at FROM agent_tokens WHERE agent_id = ? AND revoked_at IS NULL",
+                (agent_id,),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return None
+            return {
+                "has_token": True,
+                "issued_at": row["issued_at"],
+                "last_used_at": row["last_used_at"],
+            }
