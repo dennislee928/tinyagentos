@@ -21,6 +21,16 @@ EXPORT_VERSION = 1
 router = APIRouter()
 
 
+def _agent_not_found(name: str) -> JSONResponse:
+    return error_response(
+        status_code=404,
+        error="agent_not_found",
+        detail=f"No agent named {name!r} exists.",
+        fix="List agents with `GET /api/agents` to see valid names.",
+        doc_url="/docs/agents/recipes/managing-agents#list-agents",
+    )
+
+
 def _archive_timestamp() -> str:
     """UTC timestamp as YYYYMMDDTHHMMSS for archive naming."""
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
@@ -83,7 +93,13 @@ async def get_deploy_status(request: Request, name: str):
     deploy_tasks = request.app.state.deploy_tasks
     task = deploy_tasks.get(name)
     if task is None:
-        return JSONResponse({"error": f"No deploy task found for '{name}'"}, status_code=404)
+        return error_response(
+            status_code=404,
+            error="deploy_task_not_found",
+            detail=f"No deploy task found for {name!r}.",
+            fix="Start a deploy with `POST /api/agents/deploy` first.",
+            doc_url="/docs/agents/recipes/managing-agents#deploy-agent",
+        )
     return task
 
 
@@ -93,7 +109,7 @@ async def get_agent_endpoint(request: Request, name: str):
     config = request.app.state.config
     agent = find_agent(config, name)
     if not agent:
-        return JSONResponse({"error": f"Agent '{name}' not found"}, status_code=404)
+        return _agent_not_found(name)
     store = request.app.state.agent_tokens_store
     meta = await store.get_metadata(name)
     if meta:
@@ -114,7 +130,13 @@ async def add_agent(request: Request, body: AgentCreate):
     display_name = body.name.strip()
     name_error = validate_agent_name(display_name)
     if name_error:
-        return JSONResponse({"error": name_error}, status_code=400)
+        return error_response(
+            status_code=400,
+            error="invalid_agent_name",
+            detail=name_error,
+            fix="Use a non-empty name with only letters, numbers, spaces and hyphens.",
+            doc_url="/docs/agents/recipes/managing-agents#create-agent",
+        )
 
     slug = slugify_agent_name(display_name)
     unique_slug = slug
@@ -123,7 +145,13 @@ async def add_agent(request: Request, body: AgentCreate):
         unique_slug = f"{slug}-{suffix}"
         suffix += 1
         if suffix > 100:
-            return JSONResponse({"error": "Could not generate a unique agent slug"}, status_code=400)
+            return error_response(
+                status_code=400,
+                error="slug_collision_unresolvable",
+                detail="Could not generate a unique agent slug after 100 attempts.",
+                fix="Delete or rename some existing agents before creating another.",
+                doc_url="/docs/agents/recipes/managing-agents#create-agent",
+            )
 
     agent = body.model_dump()
     agent["name"] = unique_slug
@@ -139,7 +167,7 @@ async def update_agent(request: Request, name: str, body: AgentUpdate):
     config = request.app.state.config
     agent = find_agent(config, name)
     if not agent:
-        return JSONResponse({"error": f"Agent '{name}' not found"}, status_code=404)
+        return _agent_not_found(name)
     if body.host is not None:
         agent["host"] = body.host
     if body.qmd_index is not None:
@@ -165,7 +193,7 @@ async def update_agent_permissions(request: Request, name: str, body: AgentPermi
     config = request.app.state.config
     agent = find_agent(config, name)
     if not agent:
-        return JSONResponse({"error": f"Agent '{name}' not found"}, status_code=404)
+        return _agent_not_found(name)
     if body.can_read_user_memory is not None:
         agent["can_read_user_memory"] = body.can_read_user_memory
     await save_config_locked(config, config.config_path)
@@ -466,7 +494,13 @@ async def delete_agent(request: Request, name: str):
     """
     result = await _archive_agent_fully(request, name)
     if "error" in result:
-        return JSONResponse({"error": result["error"]}, status_code=result["status_code"])
+        return error_response(
+            status_code=result["status_code"],
+            error="archive_failed",
+            detail=result["error"],
+            fix="Check container state with `GET /api/agents/{name}/logs` and retry.",
+            doc_url="/docs/agents/recipes/managing-agents#delete-agent",
+        )
     # Cascade: revoke the agent's token so it can't authenticate post-delete.
     store = request.app.state.agent_tokens_store
     await store.revoke_for_agent(name)
@@ -528,7 +562,13 @@ async def deploy_agent_endpoint(request: Request, body: DeployAgentRequest):
     display_name = body.name.strip()
     name_error = validate_agent_name(display_name)
     if name_error:
-        return JSONResponse({"error": name_error}, status_code=400)
+        return error_response(
+            status_code=400,
+            error="invalid_agent_name",
+            detail=name_error,
+            fix="Use a non-empty name with only letters, numbers, spaces and hyphens.",
+            doc_url="/docs/agents/recipes/managing-agents#deploy-agent",
+        )
     # Derive a container-safe slug and ensure uniqueness
     slug = slugify_agent_name(display_name)
     unique_slug = slug
@@ -537,7 +577,13 @@ async def deploy_agent_endpoint(request: Request, body: DeployAgentRequest):
         unique_slug = f"{slug}-{suffix}"
         suffix += 1
         if suffix > 100:
-            return JSONResponse({"error": "Could not generate a unique agent slug"}, status_code=400)
+            return error_response(
+                status_code=400,
+                error="slug_collision_unresolvable",
+                detail="Could not generate a unique agent slug after 100 attempts.",
+                fix="Delete or rename some existing agents before deploying another.",
+                doc_url="/docs/agents/recipes/managing-agents#deploy-agent",
+            )
     # Rewrite body.name to the unique slug; the original user-entered name
     # is preserved as display_name for the UI.
     body.name = unique_slug
@@ -546,7 +592,13 @@ async def deploy_agent_endpoint(request: Request, body: DeployAgentRequest):
         registry = request.app.state.registry
         known = {a.id for a in registry.list_available(type_filter="agent-framework")}
         if body.framework not in known:
-            return JSONResponse({"error": f"Unknown framework '{body.framework}'. Available: {sorted(known)}"}, status_code=400)
+            return error_response(
+                status_code=400,
+                error="unknown_framework",
+                detail=f"Unknown framework {body.framework!r}. Available: {sorted(known)}",
+                fix=f"Use one of the available frameworks: {sorted(known)}.",
+                doc_url="/docs/agents/recipes/managing-agents#deploy-agent",
+            )
 
     # ------------------------------------------------------------------
     # Cross-worker deploy routing (task #176 stub)
@@ -589,15 +641,15 @@ async def deploy_agent_endpoint(request: Request, body: DeployAgentRequest):
         )
 
         if location.kind == "not_found":
-            return JSONResponse(
-                {
-                    "error": (
-                        f"model '{body.model}' was not found on the controller, "
-                        f"on any online worker, or among configured cloud providers. "
-                        f"Download it first or pick a model that is already in the cluster."
-                    ),
-                },
+            return error_response(
                 status_code=404,
+                error="model_not_found",
+                detail=(
+                    f"model '{body.model}' was not found on the controller, "
+                    f"on any online worker, or among configured cloud providers."
+                ),
+                fix="Download the model first or pick a model that is already in the cluster.",
+                doc_url="/docs/agents/recipes/managing-agents#deploy-agent",
             )
 
         if location.kind == "worker":
@@ -606,12 +658,14 @@ async def deploy_agent_endpoint(request: Request, body: DeployAgentRequest):
             if body.target_worker and body.target_worker not in location.hosts:
                 return JSONResponse(
                     {
-                        "error": (
+                        "error": "model_not_on_worker",
+                        "detail": (
                             f"model '{body.model}' is not on worker "
                             f"'{body.target_worker}'. It is available on: "
-                            f"{location.hosts}. Deploy there, or wait for "
-                            f"Phase 1.5 network model placement."
+                            f"{location.hosts}."
                         ),
+                        "fix": f"Deploy to one of: {location.hosts}, or remove the target_worker pin.",
+                        "doc_url": "/docs/agents/recipes/managing-agents#deploy-agent",
                         "model": body.model,
                         "pinned_worker": body.target_worker,
                         "available_on": location.hosts,
@@ -653,9 +707,12 @@ async def deploy_agent_endpoint(request: Request, body: DeployAgentRequest):
         pass  # idempotent — agent already registered, proceed normally
     except Exception as e:
         logger.exception("register_agent(%s) failed", unique_slug)
-        return JSONResponse(
-            {"error": f"Could not register agent with taosmd: {e}"},
+        return error_response(
             status_code=500,
+            error="taosmd_registration_failed",
+            detail=f"Could not register agent with taosmd: {e}",
+            fix="Check that the taosmd service is running and retry.",
+            doc_url="/docs/agents/recipes/managing-agents#deploy-agent",
         )
 
     # Add agent entry immediately with deploying status. qmd_url has
@@ -890,7 +947,7 @@ async def pause_agent(request: Request, name: str):
     config = request.app.state.config
     agent = find_agent(config, name)
     if not agent:
-        return JSONResponse({"error": f"Agent '{name}' not found"}, status_code=404)
+        return _agent_not_found(name)
     orchestrator = getattr(request.app.state, "orchestrator", None)
     report = {}
     if orchestrator is not None:
@@ -905,7 +962,7 @@ async def stop_agent(request: Request, name: str):
     config = request.app.state.config
     agent = find_agent(config, name)
     if not agent:
-        return JSONResponse({"error": f"Agent '{name}' not found"}, status_code=404)
+        return _agent_not_found(name)
     orchestrator = getattr(request.app.state, "orchestrator", None)
     report = {}
     if orchestrator is not None:
@@ -935,7 +992,7 @@ async def export_agent(request: Request, name: str):
     config = request.app.state.config
     agent = find_agent(config, name)
     if not agent:
-        return JSONResponse({"error": f"Agent '{name}' not found"}, status_code=404)
+        return _agent_not_found(name)
 
     # Gather channel assignments
     channel_store = request.app.state.channels
@@ -973,12 +1030,30 @@ async def import_agent(request: Request, body: AgentImport):
     agent_data = body.agent
     name = agent_data.get("name", "")
     if not name:
-        return JSONResponse({"error": "Agent name is required in export data"}, status_code=400)
+        return error_response(
+            status_code=400,
+            error="invalid_export_data",
+            detail="Agent name is required in export data.",
+            fix="Ensure the exported JSON has a non-empty 'agent.name' field.",
+            doc_url="/docs/agents/recipes/managing-agents#import-agent",
+        )
     name_error = validate_agent_name(name)
     if name_error:
-        return JSONResponse({"error": name_error}, status_code=400)
+        return error_response(
+            status_code=400,
+            error="invalid_agent_name",
+            detail=name_error,
+            fix="Use a non-empty name with only letters, numbers, spaces and hyphens.",
+            doc_url="/docs/agents/recipes/managing-agents#import-agent",
+        )
     if find_agent(config, name):
-        return JSONResponse({"error": f"Agent '{name}' already exists"}, status_code=409)
+        return error_response(
+            status_code=409,
+            error="agent_exists",
+            detail=f"Agent {name!r} already exists.",
+            fix="Delete or rename the existing agent, or import with a different name.",
+            doc_url="/docs/agents/recipes/managing-agents#import-agent",
+        )
 
     # Create the agent
     config.agents.append(agent_data)
@@ -1008,7 +1083,13 @@ async def destroy_agent(request: Request, name: str):
     """
     result = await _archive_agent_fully(request, name)
     if "error" in result:
-        return JSONResponse({"error": result["error"]}, status_code=result["status_code"])
+        return error_response(
+            status_code=result["status_code"],
+            error="archive_failed",
+            detail=result["error"],
+            fix="Check container state with `GET /api/agents/{name}/logs` and retry.",
+            doc_url="/docs/agents/recipes/managing-agents#delete-agent",
+        )
     return result
 
 
@@ -1022,18 +1103,33 @@ async def restore_archived_agent(request: Request, archive_id: str):
     config = request.app.state.config
     entry = next((a for a in config.archived_agents if a.get("id") == archive_id), None)
     if entry is None:
-        return JSONResponse({"error": f"Archived agent '{archive_id}' not found"}, status_code=404)
+        return error_response(
+            status_code=404,
+            error="archived_agent_not_found",
+            detail=f"Archived agent {archive_id!r} not found.",
+            fix="List archived agents with `GET /api/agents/archived` to see valid IDs.",
+            doc_url="/docs/agents/recipes/managing-agents#list-archived",
+        )
 
     original = entry.get("original", {}) or {}
     desired_slug = entry.get("archived_slug") or original.get("name")
     if not desired_slug:
-        return JSONResponse({"error": "Archive entry is corrupted (no slug)"}, status_code=500)
+        return error_response(
+            status_code=500,
+            error="archive_corrupt",
+            detail="Archive entry is corrupted: no slug found.",
+            fix="Purge this archive entry and re-archive the agent if possible.",
+            doc_url="/docs/agents/recipes/managing-agents#list-archived",
+        )
 
     snapshot_name = entry.get("snapshot_name")
     if not snapshot_name:
-        return JSONResponse(
-            {"error": "Archive entry has no snapshot_name — created with legacy archive path"},
+        return error_response(
             status_code=500,
+            error="archive_corrupt",
+            detail="Archive entry has no snapshot_name — created with legacy archive path.",
+            fix="Purge this archive entry; it cannot be restored.",
+            doc_url="/docs/agents/recipes/managing-agents#list-archived",
         )
 
     # The container name is derived from the original slug (unchanged since
@@ -1047,7 +1143,13 @@ async def restore_archived_agent(request: Request, archive_id: str):
         final_slug = f"{desired_slug}-{suffix}"
         suffix += 1
         if suffix > 100:
-            return JSONResponse({"error": "Could not resolve restore slug"}, status_code=500)
+            return error_response(
+                status_code=500,
+                error="restore_slug_unresolvable",
+                detail="Could not resolve a unique restore slug after 100 attempts.",
+                fix="Delete or rename some existing agents to free up the name.",
+                doc_url="/docs/agents/recipes/managing-agents#list-archived",
+            )
 
     data_dir = request.app.state.data_dir
     archive_base = data_dir / entry.get("archive_dir", "")
@@ -1056,14 +1158,15 @@ async def restore_archived_agent(request: Request, archive_id: str):
     snap_result = await snapshot_restore(container, snapshot_name)
     if not snap_result.get("success"):
         out = (snap_result.get("output") or "").strip()
-        return JSONResponse(
-            {
-                "error": (
-                    f"restore failed: snapshot_restore {container}/{snapshot_name} "
-                    f"failed: {out or 'unknown error'}"
-                ),
-            },
+        return error_response(
             status_code=500,
+            error="restore_failed",
+            detail=(
+                f"snapshot_restore {container}/{snapshot_name} "
+                f"failed: {out or 'unknown error'}"
+            ),
+            fix="Check container and snapshot state with `incus info` and retry.",
+            doc_url="/docs/agents/recipes/managing-agents#list-archived",
         )
 
     # 2) Rename if the slug changed (collision resolution).
@@ -1197,7 +1300,13 @@ async def purge_archived_agent(request: Request, archive_id: str):
     config = request.app.state.config
     entry = next((a for a in config.archived_agents if a.get("id") == archive_id), None)
     if entry is None:
-        return JSONResponse({"error": f"Archived agent '{archive_id}' not found"}, status_code=404)
+        return error_response(
+            status_code=404,
+            error="archived_agent_not_found",
+            detail=f"Archived agent {archive_id!r} not found.",
+            fix="List archived agents with `GET /api/agents/archived` to see valid IDs.",
+            doc_url="/docs/agents/recipes/managing-agents#list-archived",
+        )
 
     archived_slug = entry.get("archived_slug") or (entry.get("original") or {}).get("name") or ""
     container_name = f"taos-agent-{archived_slug}" if archived_slug else ""
@@ -1277,7 +1386,7 @@ async def resume_agent(request: Request, name: str):
     config = request.app.state.config
     agent = find_agent(config, name)
     if not agent:
-        return JSONResponse({"error": f"Agent '{name}' not found"}, status_code=404)
+        return _agent_not_found(name)
     if not agent.get("paused", False):
         return {"status": "ok", "name": name, "paused": False}
     agent["paused"] = False
@@ -1297,7 +1406,7 @@ async def patch_agent_persona(request: Request, slug: str, body: PersonaPatch):
     config = request.app.state.config
     agent = find_agent(config, slug)
     if not agent:
-        return JSONResponse({"error": "agent not found"}, status_code=404)
+        return _agent_not_found(slug)
     if body.soul_md is not None:
         agent["soul_md"] = body.soul_md
     if body.agent_md is not None:
@@ -1319,14 +1428,17 @@ _VALID_MEMORY_PLUGINS = {"taosmd", "none"}
 async def patch_agent_memory(request: Request, slug: str, body: MemoryPatch):
     """Set the memory_plugin for an agent. Valid values: 'taosmd', 'none'."""
     if body.memory_plugin not in _VALID_MEMORY_PLUGINS:
-        return JSONResponse(
-            {"error": f"Invalid memory_plugin '{body.memory_plugin}'. Must be one of: {sorted(_VALID_MEMORY_PLUGINS)}"},
+        return error_response(
             status_code=400,
+            error="invalid_memory_plugin",
+            detail=f"Invalid memory_plugin {body.memory_plugin!r}. Must be one of: {sorted(_VALID_MEMORY_PLUGINS)}",
+            fix=f"Use one of: {sorted(_VALID_MEMORY_PLUGINS)}.",
+            doc_url="/docs/agents/recipes/managing-agents#memory-plugin",
         )
     config = request.app.state.config
     agent = find_agent(config, slug)
     if not agent:
-        return JSONResponse({"error": "agent not found"}, status_code=404)
+        return _agent_not_found(slug)
     agent["memory_plugin"] = body.memory_plugin
     await save_config_locked(config, config.config_path)
     return {"status": "ok", "agent": agent}
@@ -1338,7 +1450,7 @@ async def dismiss_migration_banner(request: Request, slug: str):
     config = request.app.state.config
     agent = find_agent(config, slug)
     if not agent:
-        return JSONResponse({"error": f"Agent '{slug}' not found"}, status_code=404)
+        return _agent_not_found(slug)
     agent["migrated_to_v2_personas"] = True
     await save_config_locked(config, config.config_path)
     return {"status": "ok"}
@@ -1359,11 +1471,17 @@ async def update_agent_model(request: Request, name: str, body: AgentModelUpdate
     config = request.app.state.config
     agent = find_agent(config, name)
     if not agent:
-        return JSONResponse({"error": f"Agent '{name}' not found"}, status_code=404)
+        return _agent_not_found(name)
 
     model_id = body.model.strip()
     if not model_id:
-        return JSONResponse({"error": "model must not be empty"}, status_code=400)
+        return error_response(
+            status_code=400,
+            error="invalid_model",
+            detail="model must not be empty.",
+            fix="Provide a non-empty model identifier.",
+            doc_url="/docs/agents/recipes/managing-agents#update-model",
+        )
 
     # Validate reachability against the live cluster state.
     from tinyagentos.cluster.model_resolver import find_model_hosts
@@ -1393,10 +1511,12 @@ async def update_agent_model(request: Request, name: str, body: AgentModelUpdate
     if location.kind == "not_found":
         return JSONResponse(
             {
-                "error": (
-                    f"model '{model_id}' is not reachable anywhere in the cluster right now. "
-                    f"Make sure the model is downloaded and the worker is online."
+                "error": "model_not_reachable",
+                "detail": (
+                    f"model '{model_id}' is not reachable anywhere in the cluster right now."
                 ),
+                "fix": "Make sure the model is downloaded and the worker is online.",
+                "doc_url": "/docs/agents/recipes/managing-agents#update-model",
                 "model": model_id,
             },
             status_code=409,

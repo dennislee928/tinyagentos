@@ -117,7 +117,7 @@ class TestDeployRouting:
             "model": "does-not-exist-anywhere",
         })
         assert resp.status_code == 404
-        assert "not found" in resp.json()["error"].lower()
+        assert resp.json()["error"] == "model_not_found"
 
     async def test_worker_hosted_model_unpinned_routes_to_holder(self, client, app):
         _seed_worker(app, "fedora", ["qwen2.5-7b"])
@@ -158,7 +158,7 @@ class TestDeployRouting:
         })
         assert resp.status_code == 409
         data = resp.json()
-        assert "not on worker" in data["error"]
+        assert data["error"] == "model_not_on_worker"
         assert data["pinned_worker"] == "arch-box"
         assert data["available_on"] == ["fedora"]
 
@@ -277,7 +277,7 @@ class TestModelUpdateRoute:
         resp = await client.post("/api/agents/test-agent/model", json={"model": "ghost-model"})
         assert resp.status_code == 409
         data = resp.json()
-        assert "not reachable" in data["error"]
+        assert data["error"] == "model_not_reachable"
 
     async def test_model_update_not_found(self, client):
         resp = await client.post("/api/agents/no-such-agent/model", json={"model": "phi3"})
@@ -529,7 +529,7 @@ class TestAgentArchiveLifecycle:
 
         resp = await client.delete("/api/agents/stuck")
         assert resp.status_code == 500
-        assert "could not create snapshot" in resp.json()["error"]
+        assert "could not create snapshot" in resp.json()["detail"]
 
         live = (await client.get("/api/agents")).json()
         assert any(a["name"] == "stuck" for a in live)

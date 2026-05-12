@@ -9,8 +9,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
+from tinyagentos.errors import error_response as _canonical_error_response
 
 
 class _CacheAwareStaticFiles(StaticFiles):
@@ -928,6 +930,16 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
         await http_client.aclose()
 
     app = FastAPI(title="TinyAgentOS", version="0.1.0", lifespan=lifespan)
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_handler(request, exc):
+        return _canonical_error_response(
+            status_code=422,
+            error="validation_error",
+            detail=str(exc.errors()),
+            fix="Check the request body against the OpenAPI schema at /openapi.json.",
+            doc_url="/docs/agents/getting-started#request-shape",
+        )
 
     # Auth middleware — must be added before GZip so it runs first
     from tinyagentos.auth_middleware import AuthMiddleware
