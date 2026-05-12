@@ -13,6 +13,7 @@ import taosmd.agents as tm_agents
 from tinyagentos.agent_db import find_agent, get_agent_summaries
 from tinyagentos.config import save_config_locked, validate_agent_name, slugify_agent_name
 from tinyagentos.errors import error_response, ErrorResponse
+from tinyagentos.scope import require_scope
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ class AgentUpdate(BaseModel):
     "/api/agents",
     summary="List all agents",
 )
+@require_scope("agents.list")
 async def list_agents(request: Request):
     """Return the full list of configured agents.
 
@@ -87,6 +89,7 @@ async def list_agents(request: Request):
     "/api/agents/containers",
     summary="List live container status",
 )
+@require_scope("agents.list")
 async def list_agent_containers(request: Request):
     """Return live LXC container status for every agent container.
 
@@ -112,6 +115,7 @@ async def list_agent_containers(request: Request):
     "/api/agents/archived",
     summary="List archived agents",
 )
+@require_scope("agents.list")
 async def list_archived_agents(request: Request):
     """Return the list of archived (soft-deleted) agents.
 
@@ -130,6 +134,7 @@ async def list_archived_agents(request: Request):
         404: {"model": ErrorResponse, "description": "No deploy task found for this agent."},
     },
 )
+@require_scope("agents.read")
 async def get_deploy_status(request: Request, name: str):
     """Get the background deploy task status for an agent.
 
@@ -157,6 +162,7 @@ async def get_deploy_status(request: Request, name: str):
         404: {"model": ErrorResponse, "description": "Agent not found."},
     },
 )
+@require_scope("agents.read")
 async def get_agent_endpoint(request: Request, name: str):
     """Get full details for a single agent by name.
 
@@ -183,6 +189,7 @@ async def get_agent_endpoint(request: Request, name: str):
         422: {"model": ErrorResponse, "description": "Request validation failed."},
     },
 )
+@require_scope("agents.create")
 async def add_agent(request: Request, body: AgentCreate):
     """Add a new agent to the configuration.
 
@@ -250,6 +257,7 @@ async def add_agent(request: Request, body: AgentCreate):
         422: {"model": ErrorResponse, "description": "Request validation failed."},
     },
 )
+@require_scope("agents.update")
 async def update_agent(request: Request, name: str, body: AgentUpdate):
     """Update an existing agent's configuration.
 
@@ -288,6 +296,7 @@ class AgentPermissions(BaseModel):
         422: {"model": ErrorResponse, "description": "Request validation failed."},
     },
 )
+@require_scope("agents.update")
 async def update_agent_permissions(request: Request, name: str, body: AgentPermissions):
     """Update an agent's permission flags (e.g. user memory access).
 
@@ -317,6 +326,7 @@ async def update_agent_permissions(request: Request, name: str, body: AgentPermi
         404: {"model": ErrorResponse, "description": "Agent not found."},
     },
 )
+@require_scope("agents.token.issue")
 async def issue_agent_token(request: Request, name: str):
     """Issue a new API token for the agent. Revokes any prior active token atomically.
 
@@ -349,6 +359,7 @@ async def issue_agent_token(request: Request, name: str):
         404: {"model": ErrorResponse, "description": "Agent not found."},
     },
 )
+@require_scope("agents.token.revoke")
 async def revoke_agent_token(request: Request, name: str):
     """Revoke the agent's active token.
 
@@ -614,6 +625,7 @@ async def _archive_agent_fully(request: Request, name: str) -> dict:
         500: {"model": ErrorResponse, "description": "Archive operation failed."},
     },
 )
+@require_scope("agents.delete")
 async def delete_agent(request: Request, name: str):
     """Archive an agent instead of hard-deleting it.
 
@@ -684,6 +696,7 @@ class DeployAgentRequest(BaseModel):
         500: {"model": ErrorResponse, "description": "taosmd registration failed."},
     },
 )
+@require_scope("agents.deploy")
 async def deploy_agent_endpoint(request: Request, body: DeployAgentRequest):
     """Deploy a new agent container.
 
@@ -1047,6 +1060,7 @@ async def deploy_agent_endpoint(request: Request, body: DeployAgentRequest):
     "/api/agents/bulk/start",
     summary="Start all agent containers",
 )
+@require_scope("agents.lifecycle")
 async def bulk_start_agents(request: Request):
     """Start all agent containers in parallel.
 
@@ -1071,6 +1085,7 @@ async def bulk_start_agents(request: Request):
     "/api/agents/bulk/stop",
     summary="Stop all agent containers",
 )
+@require_scope("agents.lifecycle")
 async def bulk_stop_agents(request: Request):
     """Stop all agent containers, running a graceful prepare step first.
 
@@ -1099,6 +1114,7 @@ async def bulk_stop_agents(request: Request):
     "/api/agents/bulk/restart",
     summary="Restart all agent containers",
 )
+@require_scope("agents.lifecycle")
 async def bulk_restart_agents(request: Request):
     """Restart all agent containers in parallel.
 
@@ -1122,6 +1138,7 @@ async def bulk_restart_agents(request: Request):
     "/api/agents/{name}/start",
     summary="Start an agent's container",
 )
+@require_scope("agents.lifecycle")
 async def start_agent(request: Request, name: str):
     """Start an agent's LXC container.
 
@@ -1140,6 +1157,7 @@ async def start_agent(request: Request, name: str):
         404: {"model": ErrorResponse, "description": "Agent not found."},
     },
 )
+@require_scope("agents.lifecycle")
 async def pause_agent(request: Request, name: str):
     """Gracefully prepare an agent for pause (paused=True, container still running).
 
@@ -1165,6 +1183,7 @@ async def pause_agent(request: Request, name: str):
         404: {"model": ErrorResponse, "description": "Agent not found."},
     },
 )
+@require_scope("agents.lifecycle")
 async def stop_agent(request: Request, name: str):
     """Gracefully prepare then stop an agent's LXC container.
 
@@ -1188,6 +1207,7 @@ async def stop_agent(request: Request, name: str):
     "/api/agents/{name}/restart",
     summary="Restart an agent",
 )
+@require_scope("agents.lifecycle")
 async def restart_agent(request: Request, name: str):
     """Restart an agent's LXC container.
 
@@ -1202,6 +1222,7 @@ async def restart_agent(request: Request, name: str):
     "/api/agents/{name}/logs",
     summary="Get recent agent logs",
 )
+@require_scope("agents.logs")
 async def agent_logs(request: Request, name: str, lines: int = 100):
     """Get recent journal logs from an agent's LXC container.
 
@@ -1221,6 +1242,7 @@ async def agent_logs(request: Request, name: str, lines: int = 100):
         404: {"model": ErrorResponse, "description": "Agent not found."},
     },
 )
+@require_scope("agents.read")
 async def export_agent(request: Request, name: str):
     """Export an agent's full config as portable JSON.
 
@@ -1270,6 +1292,7 @@ class AgentImport(BaseModel):
         422: {"model": ErrorResponse, "description": "Request validation failed."},
     },
 )
+@require_scope("agents.create")
 async def import_agent(request: Request, body: AgentImport):
     """Import an agent from an exported JSON config.
 
@@ -1334,6 +1357,7 @@ async def import_agent(request: Request, body: AgentImport):
         500: {"model": ErrorResponse, "description": "Archive operation failed."},
     },
 )
+@require_scope("agents.delete")
 async def destroy_agent(request: Request, name: str):
     """Kept for API compatibility. Same behaviour as DELETE /api/agents/{name} — archives the agent.
 
@@ -1360,6 +1384,7 @@ async def destroy_agent(request: Request, name: str):
         500: {"model": ErrorResponse, "description": "Restore operation failed."},
     },
 )
+@require_scope("agents.create")
 async def restore_archived_agent(request: Request, archive_id: str):
     """Restore a previously archived agent from its snapshot.
 
@@ -1567,6 +1592,7 @@ async def restore_archived_agent(request: Request, archive_id: str):
         404: {"model": ErrorResponse, "description": "Archived agent not found."},
     },
 )
+@require_scope("agents.delete")
 async def purge_archived_agent(request: Request, archive_id: str):
     """True permanent deletion: destroys the archived container (and all its snapshots).
 
@@ -1667,6 +1693,7 @@ async def purge_archived_agent(request: Request, archive_id: str):
         404: {"model": ErrorResponse, "description": "Agent not found."},
     },
 )
+@require_scope("agents.lifecycle")
 async def resume_agent(request: Request, name: str):
     """Clear the paused flag on an agent, allowing it to accept new calls.
 
@@ -1698,6 +1725,7 @@ class PersonaPatch(BaseModel):
         422: {"model": ErrorResponse, "description": "Request validation failed."},
     },
 )
+@require_scope("agents.update")
 async def patch_agent_persona(request: Request, slug: str, body: PersonaPatch):
     """Partially update an agent's persona fields (soul_md, agent_md, source_persona_id).
 
@@ -1734,6 +1762,7 @@ _VALID_MEMORY_PLUGINS = {"taosmd", "none"}
         422: {"model": ErrorResponse, "description": "Request validation failed."},
     },
 )
+@require_scope("agents.update")
 async def patch_agent_memory(request: Request, slug: str, body: MemoryPatch):
     """Set the memory_plugin for an agent. Valid values: 'taosmd', 'none'.
 
@@ -1764,6 +1793,7 @@ async def patch_agent_memory(request: Request, slug: str, body: MemoryPatch):
         404: {"model": ErrorResponse, "description": "Agent not found."},
     },
 )
+@require_scope("agents.update")
 async def dismiss_migration_banner(request: Request, slug: str):
     """Flip migrated_to_v2_personas to True, hiding the migration banner.
 
@@ -1793,6 +1823,7 @@ class AgentModelUpdate(BaseModel):
         422: {"model": ErrorResponse, "description": "Request validation failed."},
     },
 )
+@require_scope("agents.update")
 async def update_agent_model(request: Request, name: str, body: AgentModelUpdate):
     """Update an agent's primary model and resume it if it was paused.
 
