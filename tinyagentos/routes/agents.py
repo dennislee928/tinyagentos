@@ -467,6 +467,9 @@ async def delete_agent(request: Request, name: str):
     result = await _archive_agent_fully(request, name)
     if "error" in result:
         return JSONResponse({"error": result["error"]}, status_code=result["status_code"])
+    # Cascade: revoke the agent's token so it can't authenticate post-delete.
+    store = request.app.state.agent_tokens_store
+    await store.revoke_for_agent(name)
     return result
 
 

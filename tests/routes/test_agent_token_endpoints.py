@@ -44,3 +44,13 @@ async def test_issue_unknown_agent_returns_404(client):
     body = resp.json()
     assert body["error"] == "agent_not_found"
     assert body["doc_url"] is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_agent_revokes_token(client, app):
+    await client.post("/api/agents", json={"name": "tok-agent-4", "host": "127.0.0.1", "qmd_index": "test"})
+    token = (await client.post("/api/agents/tok-agent-4/token/issue")).json()["token"]
+    await client.delete("/api/agents/tok-agent-4")
+    # Token from a deleted agent must no longer authenticate
+    resp = await client.get("/api/agents", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401
