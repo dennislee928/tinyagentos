@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taosctl"
+version = "0.1.0"
+description = "Command-line interface for taOS"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.0",
+    "httpx>=0.27",
+]
+license = { text = "MIT" }
+authors = [{ name = "taOS contributors" }]
+
+[project.scripts]
+taosctl = "taosctl.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["taosctl*"]
