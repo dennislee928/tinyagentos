@@ -1,0 +1,63 @@
+name: Conformance Nightly
+
+# A-tier conformance: live-LLM run against a real taOS instance.
+# Pass 1 ships the workflow as workflow_dispatch only (manual trigger,
+# no cron). The script's run_agent_task hook needs operator wiring to a
+# real agent runtime + secrets for the LLM provider + a deployed taOS
+# target. Once those are in place, swap the trigger to a `schedule`
+# block (e.g. nightly at 03:00 UTC) and add the required secrets.
+#
+# Per-PR conformance still runs as part of the standard CI workflow —
+# see tests/conformance/ (B-tier + C-tier).
+
+on:
+  workflow_dispatch:
+    inputs:
+      controller_url:
+        description: "Controller base URL (e.g. http://my-test-taos:6969)"
+        required: true
+        type: string
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install httpx
+
+      - name: Run smoke
+        env:
+          # Bind workflow_dispatch input into an env var so the run step
+          # never interpolates it via ${{ }} into the shell — guards
+          # against command injection.
+          CONTROLLER_URL: ${{ inputs.controller_url }}
+          # Operator-supplied: a long-lived wide-scope bearer issued on the
+          # target controller. Add this as a repo secret before enabling.
+          TAOS_SMOKE_TOKEN: ${{ secrets.TAOS_SMOKE_TOKEN }}
+        run: |
+          if [ -z "$TAOS_SMOKE_TOKEN" ]; then
+            echo "::warning::TAOS_SMOKE_TOKEN secret not set — skipping smoke run."
+            exit 0
+          fi
+          python3 scripts/conformance-smoke.py \
+            --controller "$CONTROLLER_URL" \
+            --token "$TAOS_SMOKE_TOKEN" \
+            --report-json conformance-summary.json
+
+      - name: Upload summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-summary
+          path: conformance-summary.json
+          if-no-files-found: ignore
