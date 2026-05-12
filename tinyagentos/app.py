@@ -375,6 +375,22 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
         await knowledge_store.init()
         await mcp_store.init()
         await agent_tokens_store.init()
+        try:
+            from tinyagentos.containers.backend import get_backend
+            from tinyagentos.migrations.agent_tokens_migration import run_agent_token_migration
+            try:
+                _container_backend = get_backend()
+            except RuntimeError:
+                _container_backend = None
+            await run_agent_token_migration(
+                agents=config.agents,
+                agent_tokens_store=agent_tokens_store,
+                container_backend=_container_backend,
+            )
+        except Exception:
+            logger.exception(
+                "agent_token_migration failed — agents without tokens will fall back to existing auth"
+            )
         mcp_supervisor = MCPSupervisor(mcp_store, catalog=registry, notif_store=notif_store, secrets_store=secrets_store)
         app.state.mcp_store = mcp_store
         app.state.mcp_supervisor = mcp_supervisor
