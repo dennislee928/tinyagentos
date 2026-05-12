@@ -4,7 +4,9 @@ GET  /api/taos-agent/settings  → {model: str | null}
 PATCH /api/taos-agent/settings → accepts {model: str}, persists via desktop_settings
 POST  /api/taos-agent/chat     → streams chat completion via LiteLLM proxy (NDJSON)
 
-The system prompt is read from docs/taos-agent-manual.md at module import time.
+The system prompt is assembled on each request from the agent-docs category in
+knowledge_store (populated by ingest_agent_docs at startup).  Falls back to
+docs/taos-agent-manual.md when the store has no agent-docs items.
 """
 from __future__ import annotations
 
@@ -37,6 +39,37 @@ def _load_manual() -> str:
         return ""
 
 SYSTEM_PROMPT: str = _load_manual()
+
+
+async def build_system_prompt(knowledge_store) -> str:
+    """Build the taOS helper agent's system prompt.
+
+    Source order:
+      1. knowledge_store items with source_type='agent-docs' (preferred — this
+         is the canonical surface, populated on startup by ingest_agent_docs
+         and updated when community apps install their own guides).
+      2. The legacy docs/taos-agent-manual.md file (fallback for fresh
+         installs before the first ingest succeeds; will be retired once the
+         ingest path is universal).
+
+    Returns the empty string if neither source has content (the chat endpoint
+    handles that by skipping the system message).
+    """
+    if knowledge_store is None:
+        return ""
+    try:
+        items = await knowledge_store.list_items(source_type="agent-docs", limit=200)
+    except Exception:
+        logger.warning("build_system_prompt: knowledge_store not ready, falling back to manual")
+        return _load_manual()
+    if not items:
+        return _load_manual()
+    sections = []
+    for item in items:
+        title = item.get("title") or item.get("source_url") or "Untitled"
+        content = item.get("content") or ""
+        sections.append(f"## {title}\n\n{content}")
+    return "\n\n---\n\n".join(sections)
 
 
 class SettingsPatch(BaseModel):
@@ -81,9 +114,11 @@ async def chat(request: Request, body: ChatRequest):
         )
 
     # Build the messages list: system prompt prepended, then user messages.
+    knowledge_store = getattr(request.app.state, "knowledge_store", None)
+    system_prompt = await build_system_prompt(knowledge_store)
     messages: list[dict] = []
-    if SYSTEM_PROMPT:
-        messages.append({"role": "system", "content": SYSTEM_PROMPT})
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
     messages.extend(body.messages)
 
     llm_proxy = getattr(request.app.state, "llm_proxy", None)
