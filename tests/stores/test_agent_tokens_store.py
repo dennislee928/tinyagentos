@@ -80,3 +80,26 @@ async def test_touch_last_used_updates_timestamp(store):
     await store.touch_last_used(plaintext)
     row = await store.lookup_by_plaintext(plaintext)
     assert row["last_used_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_get_metadata_returns_non_secret_fields(store):
+    await store.issue(agent_id="a", user_id="u", scope=["*"])
+    meta = await store.get_metadata("a")
+    assert meta is not None
+    assert meta["has_token"] is True
+    assert meta["issued_at"] is not None
+    assert meta["last_used_at"] is None
+    assert set(meta.keys()) == {"has_token", "issued_at", "last_used_at"}
+
+
+@pytest.mark.asyncio
+async def test_get_metadata_returns_none_when_no_token(store):
+    assert await store.get_metadata("nonexistent") is None
+
+
+@pytest.mark.asyncio
+async def test_get_metadata_returns_none_after_revoke(store):
+    await store.issue(agent_id="a", user_id="u", scope=["*"])
+    await store.revoke_for_agent("a")
+    assert await store.get_metadata("a") is None

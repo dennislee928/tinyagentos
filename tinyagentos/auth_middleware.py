@@ -45,8 +45,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         auth_header = request.headers.get("authorization", "")
 
         # Agent bearer-token path: Authorization: Bearer taos_agent_*
-        if auth_header.startswith("Bearer taos_agent_"):
-            plaintext = auth_header[len("Bearer "):]
+        # Bearer keyword is case-insensitive (HTTP standard); token body is
+        # exact (the prefix is lowercase per _TOKEN_PREFIX).
+        if (
+            auth_header.lower().startswith("bearer ")
+            and auth_header[7:].lstrip().startswith("taos_agent_")
+        ):
+            plaintext = auth_header[7:].strip()
             store = getattr(request.app.state, "agent_tokens_store", None)
             if store is None:
                 return error_response(

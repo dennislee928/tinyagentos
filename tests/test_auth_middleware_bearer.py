@@ -28,3 +28,16 @@ async def test_non_bearer_request_uses_existing_session_auth(client):
     resp = await client.get("/api/agents")
     # The client fixture sets a valid session cookie, so this should NOT be a bearer-related 401
     assert resp.status_code != 401 or "invalid_token" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_bearer_keyword_case_insensitive(client, app):
+    """RFC 6750: the Bearer keyword is case-insensitive."""
+    store = app.state.agent_tokens_store
+    plaintext, _ = await store.issue(agent_id="case-agent", user_id="u", scope=["*"])
+    for variant in ("bearer", "BEARER", "Bearer", "BeArEr"):
+        resp = await client.get(
+            "/api/agents",
+            headers={"Authorization": f"{variant} {plaintext}"},
+        )
+        assert resp.status_code == 200, f"failed for variant: {variant!r}"

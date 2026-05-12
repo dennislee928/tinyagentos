@@ -4,7 +4,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -207,7 +207,6 @@ async def revoke_agent_token(request: Request, name: str):
     """Revoke the agent's active token. The agent's existing bearer token
     returns 401 on every subsequent request after this. Issue a new token to
     restore access."""
-    from fastapi import Response
     config = request.app.state.config
     agent = find_agent(config, name)
     if not agent:
