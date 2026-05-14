@@ -24,18 +24,20 @@ def test_ui_notify_posts_title_and_body():
 
 def test_ui_notify_with_priority_high():
     with patch("taosctl.http_client.post", return_value={"delivered": True}) as p:
-        CliRunner().invoke(
+        result = CliRunner().invoke(
             cli, ["ui", "notify", "--title", "T", "--body", "B", "--priority", "high"]
         )
+    assert result.exit_code == 0, result.output
     assert p.call_args.kwargs["json"]["priority"] == "high"
 
 
 def test_ui_notify_with_app_origin():
     with patch("taosctl.http_client.post", return_value={"delivered": True}) as p:
-        CliRunner().invoke(
+        result = CliRunner().invoke(
             cli,
             ["ui", "notify", "--title", "T", "--body", "B", "--app-origin", "my-agent"],
         )
+    assert result.exit_code == 0, result.output
     assert p.call_args.kwargs["json"]["app_origin"] == "my-agent"
 
 

@@ -27,12 +27,15 @@ def login_cmd(token: str) -> None:
     """Save the bearer token for future taosctl invocations."""
     path = config.CREDENTIALS_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"token": token}), encoding="utf-8")
+    # Atomic create-with-0600 to close the TOCTOU window between
+    # write_text() and chmod(). On Windows the mode arg is ignored, which
+    # is fine — the env-var fallback is the recommended path there.
+    payload = json.dumps({"token": token}).encode("utf-8")
+    fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
     try:
-        os.chmod(path, 0o600)
-    except OSError:
-        # Windows / unusual filesystems — env-var fallback recommended there.
-        pass
+        os.write(fd, payload)
+    finally:
+        os.close(fd)
     click.echo(f"Token saved to {path}.")
 
 

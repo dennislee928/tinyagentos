@@ -44,6 +44,8 @@ def _parse_http_block(code: str) -> tuple[str, str, dict[str, str], str | None]:
     Returns (method, path, headers, body). body is None when absent.
     """
     lines = code.strip().splitlines()
+    if not lines:
+        raise ValueError("empty http block")
     request_line = lines[0]
     m = re.match(r"(\w+)\s+(\S+)", request_line)
     if not m:

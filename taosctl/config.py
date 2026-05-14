@@ -16,7 +16,8 @@ def resolve_url() -> str:
 
 def resolve_token() -> str | None:
     """Resolve the bearer token. Env wins over the credentials file. Returns
-    None if neither is set."""
+    None if neither is set, or if the credentials file contains a non-string
+    token (treated as corrupt)."""
     token = os.environ.get("TAOS_TOKEN")
     if token:
         return token
@@ -24,7 +25,8 @@ def resolve_token() -> str | None:
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            return data.get("token")
         except (json.JSONDecodeError, OSError):
             return None
+        candidate = data.get("token") if isinstance(data, dict) else None
+        return candidate if isinstance(candidate, str) else None
     return None

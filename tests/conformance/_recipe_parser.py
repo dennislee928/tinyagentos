@@ -41,7 +41,10 @@ def extract_blocks(md_path: Path) -> list[Block]:
         start_line = i + 1  # 1-indexed
         i += 1
         code_lines: list[str] = []
-        while i < len(lines) and not lines[i].startswith("```"):
+        # Exact closing fence: a line that is just three backticks (any
+        # trailing whitespace stripped). Avoids matching ```` (4+ ticks) or
+        # other backtick-prefixed prose lines as a close.
+        while i < len(lines) and lines[i].rstrip() != "```":
             code_lines.append(lines[i])
             i += 1
         # Skip closing fence (or trailing EOF). Only emit blocks whose lang

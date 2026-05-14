@@ -32,10 +32,21 @@ def ui_group() -> None:
     "app_origin",
     help="Optional attribution shown to the user; defaults to the calling agent's name.",
 )
-@click.option("--json", "json_out", is_flag=True, help="Emit only the raw JSON response.")
+@click.option(
+    "--json",
+    "json_out",
+    is_flag=True,
+    help="Emit the raw JSON response (default: a short human-readable line).",
+)
 def notify_cmd(title: str, body: str, priority: str, app_origin: str | None, json_out: bool) -> None:
     payload = {"title": title, "body": body, "priority": priority}
     if app_origin:
         payload["app_origin"] = app_origin
     result = http_client.post("/api/ui/notify", json=payload)
-    click.echo(json.dumps(result, indent=2) if json_out else json.dumps(result, indent=2))
+    if json_out:
+        click.echo(json.dumps(result, indent=2))
+    else:
+        delivered = result.get("delivered")
+        notif_id = result.get("notification_id", "?")
+        status = "delivered" if delivered else "queued"
+        click.echo(f"{status}: {notif_id}")

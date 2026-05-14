@@ -61,19 +61,22 @@ def test_agents_start_posts():
 
 def test_agents_stop_posts():
     with patch("taosctl.http_client.post", return_value={"ok": True}) as p:
-        CliRunner().invoke(cli, ["agents", "stop", "x"])
+        result = CliRunner().invoke(cli, ["agents", "stop", "x"])
+    assert result.exit_code == 0, result.output
     p.assert_called_once_with("/api/agents/x/stop")
 
 
 def test_agents_restart_posts():
     with patch("taosctl.http_client.post", return_value={"ok": True}) as p:
-        CliRunner().invoke(cli, ["agents", "restart", "x"])
+        result = CliRunner().invoke(cli, ["agents", "restart", "x"])
+    assert result.exit_code == 0, result.output
     p.assert_called_once_with("/api/agents/x/restart")
 
 
 def test_agents_pause_posts():
     with patch("taosctl.http_client.post", return_value={"ok": True}) as p:
-        CliRunner().invoke(cli, ["agents", "pause", "x"])
+        result = CliRunner().invoke(cli, ["agents", "pause", "x"])
+    assert result.exit_code == 0, result.output
     p.assert_called_once_with("/api/agents/x/pause")
 
 
@@ -87,7 +90,8 @@ def test_agents_logs_prints_lines():
 
 def test_agents_logs_passes_lines_param():
     with patch("taosctl.http_client.get", return_value={"lines": []}) as p:
-        CliRunner().invoke(cli, ["agents", "logs", "x", "--lines", "50"])
+        result = CliRunner().invoke(cli, ["agents", "logs", "x", "--lines", "50"])
+    assert result.exit_code == 0, result.output
     p.assert_called_once_with("/api/agents/x/logs", params={"lines": 50})
 
 

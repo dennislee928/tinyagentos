@@ -36,7 +36,7 @@ on each endpoint decorator in `tinyagentos/routes/agents.py`.
 | `agents.update` | `PUT /api/agents/{name}`, `PUT /api/agents/{name}/permissions`, `POST /api/agents/{name}/dismiss-migration-banner` |
 | `agents.delete` | `DELETE /api/agents/{name}` (archives by default), plus archived-agent purge endpoints |
 | `agents.deploy` | `POST /api/agents/deploy` (the real container deploy) |
-| `agents.lifecycle` | `POST /api/agents/{name}/start|stop|pause|restart`, plus `POST /api/agents/bulk/*` |
+| `agents.lifecycle` | `POST /api/agents/{name}/start\|stop\|pause\|restart`, plus `POST /api/agents/bulk/*` |
 | `agents.token.issue` | `POST /api/agents/{name}/token/issue` |
 | `agents.token.revoke` | `DELETE /api/agents/{name}/token` |
 | `ui.notify` | `POST /api/ui/notify` (the agent-to-UI primitive) |
