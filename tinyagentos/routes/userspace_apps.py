@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+
+import httpx
+from fastapi import APIRouter, Request, UploadFile, File
+from fastapi.responses import JSONResponse, FileResponse, Response
+
+from tinyagentos.userspace.package import extract_package, PackageError
+
+router = APIRouter()
+
+# Bundles are framed only by our own origin; the iframe itself is
+# sandbox=allow-scripts (opaque origin) so this is defense-in-depth.
+_BUNDLE_CSP = "default-src 'self' 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'"
+
+
+def _apps_root(request: Request) -> Path:
+    return Path(request.app.state.data_dir) / "apps"
+
+
+@router.get("/api/userspace-apps")
+async def list_apps(request: Request):
+    return await request.app.state.userspace_apps.list_installed()
+
+
+@router.post("/api/userspace-apps/install")
+async def install_app(request: Request, package: UploadFile | None = File(default=None)):
+    store = request.app.state.userspace_apps
+    if package is not None:
+        data = await package.read()
+    else:
+        body = await request.json()
+        url = body.get("source_url")
+        if not url:
+            return JSONResponse({"error": "source_url or package required"}, status_code=400)
+        async with httpx.AsyncClient(timeout=120) as c:
+            resp = await c.get(url)
+            resp.raise_for_status()
+            data = resp.content
+    try:
+        manifest = extract_package(data, apps_root=_apps_root(request))
+    except PackageError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    await store.install(
+        app_id=manifest["id"], name=manifest["name"], version=manifest["version"],
+        app_type=manifest["app_type"], entry=manifest["entry"], icon=manifest["icon"],
+        permissions_requested=manifest["permissions"],
+    )
+    return {"app_id": manifest["id"], "permissions_requested": manifest["permissions"]}
+
+
+@router.post("/api/userspace-apps/{app_id}/permissions")
+async def set_permissions(request: Request, app_id: str):
+    body = await request.json()
+    await request.app.state.userspace_apps.set_permissions_granted(app_id, body.get("granted", []))
+    return {"status": "ok"}
+
+
+@router.post("/api/userspace-apps/{app_id}/enable")
+async def enable_app(request: Request, app_id: str):
+    await request.app.state.userspace_apps.set_enabled(app_id, True)
+    return {"status": "ok"}
+
+
+@router.post("/api/userspace-apps/{app_id}/disable")
+async def disable_app(request: Request, app_id: str):
+    await request.app.state.userspace_apps.set_enabled(app_id, False)
+    return {"status": "ok"}
+
+
+@router.delete("/api/userspace-apps/{app_id}")
+async def uninstall_app(request: Request, app_id: str):
+    removed = await request.app.state.userspace_apps.uninstall(app_id)
+    root = _apps_root(request).resolve()
+    app_dir = (root / app_id).resolve()
+    if str(app_dir).startswith(str(root) + "/") and app_dir.exists():
+        shutil.rmtree(app_dir, ignore_errors=True)
+    return {"status": "ok", "removed": removed}
+
+
+@router.get("/api/userspace-apps/{app_id}/bundle/{path:path}")
+async def serve_bundle(request: Request, app_id: str, path: str):
+    root = (_apps_root(request) / app_id).resolve()
+    target = (root / path).resolve()
+    if not str(target).startswith(str(root) + "/") or not target.is_file():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    resp = FileResponse(target)
+    resp.headers["Content-Security-Policy"] = _BUNDLE_CSP
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    return resp
+
+
+@router.get("/api/userspace-apps/{app_id}/icon")
+async def serve_icon(request: Request, app_id: str):
+    app = await request.app.state.userspace_apps.get(app_id)
+    if not app or not app["icon"]:
+        return Response(status_code=404)
+    root = (_apps_root(request) / app_id).resolve()
+    icon = (root / app["icon"]).resolve()
+    if not str(icon).startswith(str(root) + "/") or not icon.is_file():
+        return Response(status_code=404)
+    return FileResponse(icon)

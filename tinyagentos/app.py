@@ -1281,6 +1281,9 @@ def create_app(data_dir: Path | None = None, catalog_dir: Path | None = None) ->
     from tinyagentos.routes.taosmd import router as taosmd_router
     app.include_router(taosmd_router)
 
+    from tinyagentos.routes import userspace_apps as userspace_apps_routes
+    app.include_router(userspace_apps_routes.router)
+
     return app
 
 
