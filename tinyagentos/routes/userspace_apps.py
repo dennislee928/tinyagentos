@@ -75,12 +75,22 @@ async def install_app(request: Request, package: UploadFile | None = File(defaul
         manifest = extract_package(data, apps_root=_apps_root(request))
     except PackageError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+    existing = await store.get(manifest["id"])
+    new_perms = [
+        p for p in manifest["permissions"]
+        if existing and p not in existing["permissions_granted"]
+    ]
     await store.install(
         app_id=manifest["id"], name=manifest["name"], version=manifest["version"],
         app_type=manifest["app_type"], entry=manifest["entry"], icon=manifest["icon"],
         permissions_requested=manifest["permissions"],
     )
-    return {"app_id": manifest["id"], "permissions_requested": manifest["permissions"]}
+    return {
+        "app_id": manifest["id"],
+        "permissions_requested": manifest["permissions"],
+        "needs_consent": bool(existing and new_perms),
+        "new_permissions": new_perms,
+    }
 
 
 @router.post("/api/userspace-apps/{app_id}/permissions")
