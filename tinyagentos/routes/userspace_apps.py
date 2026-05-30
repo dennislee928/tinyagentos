@@ -8,12 +8,26 @@ from fastapi import APIRouter, Request, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse, Response
 
 from tinyagentos.userspace.package import extract_package, PackageError
+from tinyagentos.userspace.url_guard import is_safe_public_url
 
 router = APIRouter()
 
-# Bundles are framed only by our own origin; the iframe itself is
-# sandbox=allow-scripts (opaque origin) so this is defense-in-depth.
-_BUNDLE_CSP = "default-src 'self' 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'"
+# Bundle CSP. The `sandbox allow-scripts` directive (no allow-same-origin)
+# forces the document into an OPAQUE origin even on a direct top-level
+# navigation — so a userspace bundle can never execute on the core origin with
+# the session cookie (defends against stored XSS), while still letting the app
+# run its own scripts inside our sandboxed iframe. `default-src 'none'` plus the
+# explicit self/inline allowances keep it locked down.
+_BUNDLE_CSP = (
+    "sandbox allow-scripts allow-forms allow-popups; "
+    "default-src 'none'; "
+    "script-src 'self' 'unsafe-inline' blob:; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; "
+    "font-src 'self' data:; "
+    "connect-src 'self'; "
+    "frame-ancestors 'self'; base-uri 'none'"
+)
 
 
 def _apps_root(request: Request) -> Path:
@@ -35,7 +49,15 @@ async def install_app(request: Request, package: UploadFile | None = File(defaul
         url = body.get("source_url")
         if not url:
             return JSONResponse({"error": "source_url or package required"}, status_code=400)
-        async with httpx.AsyncClient(timeout=120) as c:
+        # SSRF guard: only fetch public http(s) hosts, and don't follow
+        # redirects (a 3xx could bounce to a blocked internal address).
+        if not is_safe_public_url(url):
+            return JSONResponse(
+                {"error": "source_url is not allowed — only public http(s) hosts "
+                          "(no private, loopback, link-local or reserved addresses)"},
+                status_code=400,
+            )
+        async with httpx.AsyncClient(timeout=120, follow_redirects=False) as c:
             resp = await c.get(url)
             resp.raise_for_status()
             data = resp.content
