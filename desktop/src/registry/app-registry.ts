@@ -4,7 +4,7 @@ export interface AppManifest {
   id: string;
   name: string;
   icon: string;
-  category: "platform" | "os" | "streaming" | "game";
+  category: "platform" | "os" | "streaming" | "game" | "userspace";
   component: () => Promise<{ default: ComponentType<{ windowId: string }> }>;
   defaultSize: { w: number; h: number };
   minSize: { w: number; h: number };
@@ -56,8 +56,15 @@ const apps: AppManifest[] = [
   { id: "crosswords", name: "Crosswords", icon: "grid-3x3", category: "game", component: () => import("@/apps/CrosswordsApp").then((m) => ({ default: m.CrosswordsApp })), defaultSize: { w: 700, h: 600 }, minSize: { w: 500, h: 450 }, singleton: true, pinned: false, launchpadOrder: 42 },
 ];
 
+let userspaceApps: AppManifest[] = [];
+
+export async function refreshUserspaceApps(): Promise<void> {
+  const { fetchUserspaceApps } = await import("@/lib/userspace-apps");
+  userspaceApps = await fetchUserspaceApps();
+}
+
 export function getApp(id: string): AppManifest | undefined {
-  return apps.find((a) => a.id === id);
+  return [...apps, ...userspaceApps].find((a) => a.id === id);
 }
 
 export function getAppsByCategory(category: AppManifest["category"]): AppManifest[] {
@@ -65,7 +72,7 @@ export function getAppsByCategory(category: AppManifest["category"]): AppManifes
 }
 
 export function getAllApps(): AppManifest[] {
-  return [...apps].sort((a, b) => a.launchpadOrder - b.launchpadOrder);
+  return [...apps, ...userspaceApps].sort((a, b) => a.launchpadOrder - b.launchpadOrder);
 }
 
 /**
