@@ -7,6 +7,7 @@ import httpx
 from fastapi import APIRouter, Request, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse, Response
 
+from tinyagentos.userspace.broker import handle_capability
 from tinyagentos.userspace.package import extract_package, PackageError
 from tinyagentos.userspace.url_guard import is_safe_public_url
 
@@ -124,3 +125,32 @@ async def serve_icon(request: Request, app_id: str):
     if not str(icon).startswith(str(root) + "/") or not icon.is_file():
         return Response(status_code=404)
     return FileResponse(icon)
+
+
+def _broker_services(request: Request) -> dict:
+    """Core services the broker may expose for gated capabilities. Each optional;
+    absence => the gated capability returns a null/empty result."""
+    st = request.app.state
+    return {
+        "notifications": getattr(st, "notifications", None),
+        "memory": getattr(st, "user_memory", None),
+        "llm": getattr(st, "llm_proxy", None),
+        "agent": None,  # agent-invocation adapter wired in a later increment
+    }
+
+
+@router.post("/api/userspace-apps/{app_id}/broker")
+async def broker(request: Request, app_id: str):
+    store = request.app.state.userspace_apps
+    app = await store.get(app_id)
+    if app is None or not app["enabled"]:
+        return JSONResponse({"error": "app not found or disabled"}, status_code=404)
+    body = await request.json()
+    out = await handle_capability(
+        app_id, body.get("capability", ""), body.get("args") or {},
+        granted=app["permissions_granted"],
+        data_store=request.app.state.userspace_data,
+        app_dir=_apps_root(request) / app_id,
+        services=_broker_services(request),
+    )
+    return out

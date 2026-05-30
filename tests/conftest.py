@@ -113,6 +113,10 @@ async def client(app, tmp_data_dir):
     if userspace_apps._db is not None:
         await userspace_apps.close()
     await userspace_apps.init()
+    userspace_data = app.state.userspace_data
+    if userspace_data._db is not None:
+        await userspace_data.close()
+    await userspace_data.init()
     chat_messages = app.state.chat_messages
     if chat_messages._db is not None:
         await chat_messages.close()
@@ -165,6 +169,7 @@ async def client(app, tmp_data_dir):
     await chat_messages.close()
     await expert_agents.close()
     await userspace_apps.close()
+    await userspace_data.close()
     await streaming_sessions.close()
     await shared_folders.close()
     await agent_messages.close()

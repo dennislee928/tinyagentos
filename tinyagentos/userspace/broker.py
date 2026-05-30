@@ -67,7 +67,13 @@ async def handle_capability(app_id, capability, args, *, granted, data_store, ap
     # Gated caps (only reached when granted)
     if capability == "app.memory.search":
         mem = services.get("memory")
-        return {"result": await mem.search(args.get("q", "")) if mem else []}
+        _search = getattr(mem, "search", None) if mem is not None else None
+        if _search is None:
+            return {"result": []}
+        try:
+            return {"result": await _search(args.get("q", ""))}
+        except TypeError:
+            return {"result": []}
     if capability == "app.agent":
         agent = services.get("agent")
         return {"result": await agent.ask(args.get("name"), args.get("message")) if agent else None}
