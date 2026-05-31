@@ -35,3 +35,49 @@ async def test_set_permissions_and_enabled(tmp_path):
     assert row["permissions_granted"] == ["app.net"]
     assert row["enabled"] == 0
     await store.close()
+
+
+@pytest.mark.asyncio
+async def test_fresh_install_has_no_runtime_location(tmp_path):
+    store = UserspaceAppStore(tmp_path / "rt.db")
+    await store.init()
+    await store.install(app_id="ctr", name="Ctr", version="1.0.0",
+                        app_type="container", entry="index.html", icon="",
+                        permissions_requested=[])
+    row = await store.get("ctr")
+    assert row["container_host"] is None
+    assert row["container_port"] is None
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_set_runtime_location(tmp_path):
+    store = UserspaceAppStore(tmp_path / "rt2.db")
+    await store.init()
+    await store.install(app_id="ctr", name="Ctr", version="1.0.0",
+                        app_type="container", entry="index.html", icon="",
+                        permissions_requested=[])
+    await store.set_runtime_location("ctr", "127.0.0.1", 13042)
+    row = await store.get("ctr")
+    assert row["container_host"] == "127.0.0.1"
+    assert row["container_port"] == 13042
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_reinstall_preserves_runtime_location(tmp_path):
+    store = UserspaceAppStore(tmp_path / "rt3.db")
+    await store.init()
+    await store.install(app_id="ctr", name="Ctr", version="1.0.0",
+                        app_type="container", entry="index.html", icon="",
+                        permissions_requested=[])
+    await store.set_runtime_location("ctr", "127.0.0.1", 13042)
+    # Re-install (upsert) should not wipe the runtime location
+    await store.install(app_id="ctr", name="Ctr v2", version="1.0.1",
+                        app_type="container", entry="index.html", icon="",
+                        permissions_requested=[])
+    row = await store.get("ctr")
+    assert row["container_host"] == "127.0.0.1"
+    assert row["container_port"] == 13042
+    assert row["version"] == "1.0.1"
+    await store.close()

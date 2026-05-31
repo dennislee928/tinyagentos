@@ -27,6 +27,19 @@ def parse_manifest(text: str) -> dict:
             f"app_type {data['app_type']!r} not allowed for userspace apps "
             f"(native is reserved for first-party core); use one of {_ALLOWED_TYPES}"
         )
+    if data["app_type"] == "container":
+        container = data.get("container")
+        if not isinstance(container, dict):
+            raise PackageError("container app requires a 'container' block")
+        if not container.get("image") or not isinstance(container.get("image"), str):
+            raise PackageError("container app requires container.image")
+        ports = container.get("ports")
+        if (
+            not isinstance(ports, list)
+            or len(ports) == 0
+            or not all(isinstance(p, int) and not isinstance(p, bool) for p in ports)
+        ):
+            raise PackageError("container app requires container.ports as a non-empty list of ints")
     data.setdefault("entry", "index.html")
     data.setdefault("icon", "")
     data.setdefault("permissions", [])

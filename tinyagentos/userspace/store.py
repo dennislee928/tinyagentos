@@ -25,7 +25,9 @@ class UserspaceAppStore(BaseStore):
         permissions_requested TEXT NOT NULL DEFAULT '[]',
         permissions_granted TEXT NOT NULL DEFAULT '[]',
         enabled INTEGER NOT NULL DEFAULT 1,
-        installed_at INTEGER NOT NULL
+        installed_at INTEGER NOT NULL,
+        container_host TEXT,
+        container_port INTEGER
     );
     """
 
@@ -54,6 +56,7 @@ class UserspaceAppStore(BaseStore):
             "permissions_requested": json.loads(row[6]),
             "permissions_granted": json.loads(row[7]),
             "enabled": row[8], "installed_at": row[9],
+            "container_host": row[10], "container_port": row[11],
         }
 
     async def get(self, app_id) -> dict | None:
@@ -77,6 +80,14 @@ class UserspaceAppStore(BaseStore):
         assert self._db is not None
         await self._db.execute("UPDATE userspace_apps SET enabled=? WHERE app_id=?",
                                (1 if enabled else 0, app_id))
+        await self._db.commit()
+
+    async def set_runtime_location(self, app_id, host: str, port: int):
+        assert self._db is not None
+        await self._db.execute(
+            "UPDATE userspace_apps SET container_host=?, container_port=? WHERE app_id=?",
+            (host, port, app_id),
+        )
         await self._db.commit()
 
     async def uninstall(self, app_id) -> bool:
