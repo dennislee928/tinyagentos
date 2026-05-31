@@ -55,6 +55,34 @@ async def test_uninstall_destroys_container_app_backend(client):
         assert destroy.await_args.args[0] == "echo"
 
 @pytest.mark.asyncio
+async def test_reinstall_tears_down_old_container_first(client):
+    """Re-installing a container app must call destroy before deploy on the second install."""
+    with patch("tinyagentos.routes.userspace_apps.deploy_app_container",
+               new_callable=AsyncMock) as deploy, \
+         patch("tinyagentos.routes.userspace_apps.destroy_app_container",
+               new_callable=AsyncMock) as destroy:
+        deploy.return_value = {"success": True, "host": "127.0.0.1", "port": 13042}
+
+        # First install — no prior app, destroy must NOT be called.
+        r1 = await client.post("/api/userspace-apps/install",
+                               files={"package": ("echo.taosapp", _zip(), "application/zip")})
+        assert r1.status_code == 200
+        destroy.assert_not_awaited()
+
+        # Second install of the same id — destroy must be called once with "echo"
+        # BEFORE deploy is called again.
+        deploy_call_count_before = deploy.await_count
+        r2 = await client.post("/api/userspace-apps/install",
+                               files={"package": ("echo.taosapp", _zip(), "application/zip")})
+        assert r2.status_code == 200
+        destroy.assert_awaited_once()
+        assert destroy.await_args.args[0] == "echo"
+        # deploy was called a second time and succeeded
+        assert deploy.await_count == deploy_call_count_before + 1
+        assert r2.json()["container_deployed"] is True
+
+
+@pytest.mark.asyncio
 async def test_deploy_failure_still_installs_but_reports_error(client):
     with patch("tinyagentos.routes.userspace_apps.deploy_app_container",
                new_callable=AsyncMock) as deploy:

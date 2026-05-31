@@ -85,3 +85,49 @@ async def test_unknown_capability_rejected(tmp_path):
 def test_capability_sets():
     assert "app.net" in GATED_CAPS and "app.memory" in GATED_CAPS
     assert "app.kv" in FREE_CAPS and "app.net" not in FREE_CAPS
+
+
+# --- Finding 1: app.net path traversal + header filtering ---
+
+import types
+from unittest.mock import AsyncMock, patch
+
+
+@pytest.mark.asyncio
+async def test_app_net_rejects_dotdot_traversal(tmp_path):
+    """.. segments in the path must be blocked before any HTTP call is made."""
+    s = await _store(tmp_path)
+    out = await handle_capability(
+        "echo", "app.net", {"path": "../../secret"},
+        granted=["app.net"], data_store=s, app_dir=tmp_path / "echo",
+        services={"app_backend_url": "http://127.0.0.1:13042"},
+    )
+    assert out == {"error": "invalid_path"}
+    await s.close()
+
+
+@pytest.mark.asyncio
+async def test_app_net_blocks_dangerous_headers_and_passes_safe_ones(tmp_path):
+    """Host (and other blocked headers) must be stripped; X-Ok must reach the backend."""
+    s = await _store(tmp_path)
+    fake_resp = types.SimpleNamespace(status_code=200, text="ok")
+    with patch("tinyagentos.userspace.broker.httpx.AsyncClient") as mock_client:
+        mock_request = AsyncMock(return_value=fake_resp)
+        mock_client.return_value.__aenter__ = AsyncMock(
+            return_value=types.SimpleNamespace(request=mock_request)
+        )
+        mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        out = await handle_capability(
+            "echo", "app.net", {"path": "/ping", "headers": {"Host": "evil", "X-Ok": "1"}},
+            granted=["app.net"], data_store=s, app_dir=tmp_path / "echo",
+            services={"app_backend_url": "http://127.0.0.1:13042"},
+        )
+
+    assert out == {"result": {"status": 200, "body": "ok"}}
+    _, call_kwargs = mock_request.call_args
+    sent_headers = call_kwargs.get("headers") or {}
+    lower_keys = {k.lower() for k in sent_headers}
+    assert "host" not in lower_keys, "Host header must be stripped"
+    assert "x-ok" in lower_keys, "X-Ok header must be forwarded"
+    await s.close()

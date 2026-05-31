@@ -3,6 +3,11 @@ from __future__ import annotations
 import httpx
 from pathlib import Path
 
+# Headers an app may NOT set on a backend-proxy call — these would let it
+# spoof identity/routing or exfiltrate the session.
+_BLOCKED_PROXY_HEADERS = {"host", "authorization", "cookie",
+                          "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto"}
+
 # Capability namespaces granted to every app without consent.
 FREE_CAPS = {"app.kv", "app.table", "app.files", "app.notify", "app.window"}
 # Capability namespaces that require an explicit granted permission.
@@ -86,16 +91,19 @@ async def handle_capability(app_id, capability, args, *, granted, data_store, ap
         if not base:
             return {"error": "no_backend"}
         path = str(args.get("path", "/"))
-        if "://" in path or path.startswith("//"):
+        if "://" in path or path.startswith("//") or ".." in path.split("/"):
             return {"error": "invalid_path"}
         url = base.rstrip("/") + "/" + path.lstrip("/")
         method = str(args.get("method", "GET")).upper()
+        _raw = args.get("headers") or {}
+        _headers = {k: v for k, v in _raw.items()
+                    if k.lower() not in _BLOCKED_PROXY_HEADERS} or None
         try:
             async with httpx.AsyncClient(timeout=30, follow_redirects=False) as c:
                 resp = await c.request(
                     method, url,
                     json=args.get("body") if args.get("body") is not None else None,
-                    headers=args.get("headers") or None,
+                    headers=_headers,
                 )
             return {"result": {"status": resp.status_code, "body": resp.text}}
         except httpx.HTTPError as exc:

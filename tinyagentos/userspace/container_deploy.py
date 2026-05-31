@@ -18,7 +18,7 @@ def _find_free_port(start: int = 13000, end: int = 14000) -> int:
     for port in range(start, end):
         with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
             try:
-                s.bind(("0.0.0.0", port))
+                s.bind(("127.0.0.1", port))
                 return port
             except OSError:
                 continue

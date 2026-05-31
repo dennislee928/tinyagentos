@@ -88,6 +88,10 @@ async def install_app(request: Request, package: UploadFile | None = File(defaul
     )
     deploy_info: dict = {}
     if manifest["app_type"] == "container":
+        # Re-install / upgrade: tear down the previous backend first so the
+        # redeploy doesn't collide on the container name and picks up the new image.
+        if existing:
+            await destroy_app_container(manifest["id"])
         dep = await deploy_app_container(manifest["id"], manifest.get("container", {}))
         if dep.get("success"):
             await store.set_runtime_location(manifest["id"], dep["host"], dep["port"])
