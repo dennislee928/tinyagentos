@@ -163,15 +163,19 @@ async def serve_icon(request: Request, app_id: str):
     return FileResponse(icon)
 
 
-def _broker_services(request: Request) -> dict:
+def _broker_services(request: Request, app: dict) -> dict:
     """Core services the broker may expose for gated capabilities. Each optional;
     absence => the gated capability returns a null/empty result."""
     st = request.app.state
+    backend_url = None
+    if app.get("container_host") and app.get("container_port"):
+        backend_url = f"http://{app['container_host']}:{app['container_port']}"
     return {
         "notifications": getattr(st, "notifications", None),
         "memory": getattr(st, "user_memory", None),
         "llm": getattr(st, "llm_proxy", None),
         "agent": None,  # agent-invocation adapter wired in a later increment
+        "app_backend_url": backend_url,
     }
 
 
@@ -187,6 +191,6 @@ async def broker(request: Request, app_id: str):
         granted=app["permissions_granted"],
         data_store=request.app.state.userspace_data,
         app_dir=_apps_root(request) / app_id,
-        services=_broker_services(request),
+        services=_broker_services(request, app),
     )
     return out

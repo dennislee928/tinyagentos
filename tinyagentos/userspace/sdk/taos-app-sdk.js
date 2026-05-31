@@ -39,6 +39,14 @@
     notify: (title, body) => call("app.notify", { title, body }),
     // gated — resolve to {error:"permission_denied"} if not granted
     net: { fetch: (url, opts) => call("app.net", { url, opts }) },
+    backend: {
+      fetch: (path, opts) => call("app.net", {
+        path,
+        method: (opts && opts.method) || "GET",
+        body: opts && opts.body,
+        headers: opts && opts.headers,
+      }).then((r) => r.result),
+    },
     agent: { ask: (name, message) => call("app.agent", { name, message }).then((r) => r.result) },
     memory: { search: (q) => call("app.memory.search", { q }).then((r) => r.result) },
   };

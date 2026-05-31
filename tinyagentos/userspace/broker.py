@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import httpx
 from pathlib import Path
 
 # Capability namespaces granted to every app without consent.
@@ -81,6 +82,23 @@ async def handle_capability(app_id, capability, args, *, granted, data_store, ap
         llm = services.get("llm")
         return {"result": await llm.complete(args.get("prompt", "")) if llm else None}
     if capability == "app.net":
-        return {"error": "not_implemented_here"}  # proxied at the route/container layer (M4)
+        base = services.get("app_backend_url")
+        if not base:
+            return {"error": "no_backend"}
+        path = str(args.get("path", "/"))
+        if "://" in path or path.startswith("//"):
+            return {"error": "invalid_path"}
+        url = base.rstrip("/") + "/" + path.lstrip("/")
+        method = str(args.get("method", "GET")).upper()
+        try:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=False) as c:
+                resp = await c.request(
+                    method, url,
+                    json=args.get("body") if args.get("body") is not None else None,
+                    headers=args.get("headers") or None,
+                )
+            return {"result": {"status": resp.status_code, "body": resp.text}}
+        except httpx.HTTPError as exc:
+            return {"error": "backend_unreachable", "detail": str(exc)}
 
     return {"error": "unknown_capability", "capability": capability}
