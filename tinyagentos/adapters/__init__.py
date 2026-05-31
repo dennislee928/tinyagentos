@@ -14,6 +14,12 @@ _REGISTRY: list[dict] = [
         "verification_status": "beta",
     },
     {
+        "id": "acp",
+        "name": "ACP (Agent Client Protocol)",
+        "description": "Fork-free OpenClaw (or any ACP agent) over JSON-RPC stdio — spike",
+        "verification_status": "alpha",
+    },
+    {
         "id": "smolagents",
         "name": "SmolAgents",
         "description": "Lightweight code-first agent framework by Hugging Face",
