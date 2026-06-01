@@ -56,3 +56,13 @@ nsis:
 
 msi:
   artifactName: "TinyAgentOS-${version}.${ext}"
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+  category: Utility
+  icon: ../static/icon-512.png
+  artifactName: "TinyAgentOS-${version}-linux-${arch}.${ext}"

@@ -9,28 +9,70 @@ let serverProcess = null;
 const BACKEND_PORT = 6969;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 
-function resourcePath(...segments) {
-  if (app.isPackaged) {
-    return path.join(process.resourcesPath, ...segments);
-  }
-  return path.join(__dirname, '..', ...segments);
-}
-
-function getBackendDir() {
+function getSourceDir() {
   if (app.isPackaged) {
     return process.resourcesPath;
   }
   return path.join(__dirname, '..');
 }
 
+function getAppDataDir() {
+  return path.join(app.getPath('userData'), 'app');
+}
+
+function copyRecursive(src, dest) {
+  if (!fs.existsSync(dest)) {
+    fs.mkdirSync(dest, { recursive: true });
+  }
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === 'node_modules' || entry.name === '.venv' || entry.name === '.git' || entry.name === '__pycache__') continue;
+    const s = path.join(src, entry.name);
+    const d = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyRecursive(s, d);
+    } else if (!fs.existsSync(d)) {
+      fs.copyFileSync(s, d);
+    }
+  }
+}
+
+function ensureBackendInstalled(sourceDir, appDataDir) {
+  if (!fs.existsSync(appDataDir)) {
+    copyRecursive(sourceDir, appDataDir);
+  }
+  const marker = path.join(appDataDir, '.installed');
+  if (fs.existsSync(marker)) return;
+
+  const pip = spawn('python3', ['-m', 'pip', 'install', '-e', '.', '--quiet', '--prefix', appDataDir], {
+    cwd: appDataDir,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return new Promise((resolve, reject) => {
+    let stderr = '';
+    pip.stderr.on('data', (d) => { stderr += d.toString(); });
+    pip.on('close', (code) => {
+      if (code === 0) {
+        fs.writeFileSync(marker, '');
+        resolve();
+      } else {
+        reject(new Error(`pip install failed (${code}): ${stderr.slice(-500)}`));
+      }
+    });
+    pip.on('error', reject);
+  });
+}
+
+function getPythonPath(appDataDir) {
+  const sitePackages = path.join(appDataDir, 'lib', `python${process.env.PYTHON_VERSION || '3.12'}`, 'site-packages');
+  return `${appDataDir}/lib/python3.12/site-packages`;
+}
+
 function waitForServer(url, timeoutMs = 60000) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     function poll() {
-      const req = http.get(url, (res) => {
-        resolve();
-        req.destroy();
-      });
+      const req = http.get(url, (res) => { res.resume(); resolve(); });
       req.on('error', () => {
         if (Date.now() - start > timeoutMs) {
           reject(new Error(`Server did not start within ${timeoutMs / 1000}s`));
@@ -44,42 +86,29 @@ function waitForServer(url, timeoutMs = 60000) {
   });
 }
 
-function installPythonDeps(backendDir) {
-  return new Promise((resolve, reject) => {
-    const pip = spawn('python3', ['-m', 'pip', 'install', '-e', '.', '--quiet'], {
-      cwd: backendDir,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stderr = '';
-    pip.stderr.on('data', (d) => { stderr += d.toString(); });
-    pip.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`pip install failed (${code}): ${stderr.slice(-500)}`));
-    });
-    pip.on('error', reject);
-  });
-}
-
 async function startServer() {
-  const backendDir = getBackendDir();
-  const dataDir = path.join(app.getPath('userData'), 'data');
+  const sourceDir = getSourceDir();
+  const appDataDir = getAppDataDir();
+  const taosDataDir = path.join(app.getPath('userData'), 'data');
 
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-    const defaultData = path.join(backendDir, 'data');
-    if (fs.existsSync(defaultData)) {
-      execSync(`cp -r "${defaultData}/." "${dataDir}/"`, { stdio: 'ignore' });
-    }
-  }
+  fs.mkdirSync(taosDataDir, { recursive: true });
 
   if (app.isPackaged) {
     try {
-      await installPythonDeps(backendDir);
+      await ensureBackendInstalled(sourceDir, appDataDir);
     } catch (err) {
-      dialog.showErrorBox('Setup Error', `Failed to install dependencies:\n${err.message}`);
+      dialog.showErrorBox('Setup Error', `Failed to install backend:\n${err.message}`);
       throw err;
     }
   }
+
+  const pythonEnv = {
+    ...process.env,
+    TAOS_HOST: '127.0.0.1',
+    TAOS_PORT: String(BACKEND_PORT),
+    TAOS_DATA_DIR: taosDataDir,
+    PYTHONPATH: app.isPackaged ? getPythonPath(appDataDir) : (process.env.PYTHONPATH || ''),
+  };
 
   serverProcess = spawn('python3', [
     '-m', 'uvicorn', 'tinyagentos.app:create_app', '--factory',
@@ -87,23 +116,14 @@ async function startServer() {
     '--port', String(BACKEND_PORT),
     '--log-level', 'info',
   ], {
-    cwd: backendDir,
-    env: {
-      ...process.env,
-      TAOS_HOST: '127.0.0.1',
-      TAOS_PORT: String(BACKEND_PORT),
-      TAOS_DATA_DIR: dataDir,
-    },
+    cwd: app.isPackaged ? appDataDir : sourceDir,
+    env: pythonEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  serverProcess.stdout.on('data', (d) => console.log(`[backend] ${d}`));
-  serverProcess.stderr.on('data', (d) => console.error(`[backend] ${d}`));
-
-  serverProcess.on('exit', (code) => {
-    console.log(`[backend] exited with code ${code}`);
-    serverProcess = null;
-  });
+  serverProcess.stdout.on('data', (d) => console.log(`[backend] ${d.toString().trim()}`));
+  serverProcess.stderr.on('data', (d) => console.error(`[backend] ${d.toString().trim()}`));
+  serverProcess.on('exit', (code) => { serverProcess = null; });
 
   await waitForServer(`${BACKEND_URL}/api/health`);
 }
@@ -132,10 +152,7 @@ function createWindow() {
   });
 
   mainWindow.loadURL(BACKEND_URL);
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
+  mainWindow.on('closed', () => { mainWindow = null; });
 }
 
 app.whenReady().then(async () => {
@@ -148,17 +165,6 @@ app.whenReady().then(async () => {
   }
 });
 
-app.on('window-all-closed', () => {
-  stopServer();
-  app.quit();
-});
-
-app.on('before-quit', () => {
-  stopServer();
-});
-
-app.on('activate', () => {
-  if (mainWindow === null && serverProcess) {
-    createWindow();
-  }
-});
+app.on('window-all-closed', () => { stopServer(); app.quit(); });
+app.on('before-quit', () => { stopServer(); });
+app.on('activate', () => { if (mainWindow === null && serverProcess) createWindow(); });
