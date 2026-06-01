@@ -131,8 +131,58 @@ jobs:
           path: electron/dist/*.msi
           if-no-files-found: warn
 
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Python deps
+        run: pip install -e ".[dev]"
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Build SPA frontend
+        run: |
+          cd desktop
+          npm ci --silent
+          npm run build
+
+      - name: Install electron + electron-builder
+        run: |
+          cd electron
+          npm ci --silent
+
+      - name: Build AppImage
+        run: |
+          cd electron
+          npx electron-builder --linux --arm64=${{ matrix.arch == 'arm64' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: TinyAgentOS-linux-${{ matrix.arch }}
+          path: electron/dist/*.AppImage
+          if-no-files-found: warn
+
   release:
-    needs: [build-mac, build-windows]
+    needs: [build-mac, build-windows, build-linux]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
 
@@ -155,17 +205,19 @@ jobs:
             ### Desktop Installers
             - **macOS**: TinyAgentOS-*.dmg (Apple Silicon + Intel)
             - **Windows**: TinyAgentOS-*-setup.exe (NSIS installer) + TinyAgentOS-*.msi (MSI)
-
-            ### What's new
-            See the commit log for details.
+            - **Linux**: TinyAgentOS-*.AppImage (x64 + arm64)
 
             ### Docker
             ```bash
             docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
             ```
+
+            ### What's new
+            See the commit log for details.
           files: |
             *.dmg
             *.exe
             *.msi
+            *.AppImage
           draft: false
           prerelease: false

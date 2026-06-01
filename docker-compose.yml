@@ -1,14 +1,27 @@
+# TinyAgentOS Full Stack
+#
+# Start:   docker compose up -d
+# Stop:    docker compose down
+# Logs:    docker compose logs -f
+#
+# Environment variables (override with docker compose run -e VAR=val or .env):
+#   TAOS_HOST          - listen address (default: 0.0.0.0)
+#   TAOS_PORT          - listen port (default: 6969)
+#   TAOS_DATA_DIR      - data directory (default: /app/data)
+#   POSTGRES_PASSWORD  - postgres password (default: litellm)
+#   OLLAMA_HOST        - ollama listen address (default: 0.0.0.0)
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: litellm
-      POSTGRES_PASSWORD: litellm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-litellm}
       POSTGRES_DB: litellm
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U litellm"]
       interval: 10s
@@ -22,8 +35,10 @@ services:
     image: ollama/ollama:latest
     volumes:
       - ollama_data:/root/.ollama
-    ports:
-      - "11434:11434"
+    expose:
+      - "11434"
+    environment:
+      OLLAMA_HOST: ${OLLAMA_HOST:-0.0.0.0}
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
@@ -36,20 +51,20 @@ services:
   tinyagentos:
     build:
       context: .
-      platforms:
-        - linux/amd64
-        - linux/arm64
+      x-bake:
+        platforms:
+          - linux/amd64
+          - linux/arm64
     ports:
-      - "6969:6969"
-      - "6970:6970"
+      - "${TAOS_PORT:-6969}:6969"
+      - "${TAOS_BROWSER_PROXY_PORT:-6970}:6970"
     volumes:
       - taos_data:/app/data
-      - taos_static:/app/static
     environment:
-      TAOS_HOST: "0.0.0.0"
-      TAOS_PORT: "6969"
-      TAOS_BROWSER_PROXY_PORT: "6970"
-      TAOS_DATA_DIR: /app/data
+      TAOS_HOST: ${TAOS_HOST:-0.0.0.0}
+      TAOS_PORT: ${TAOS_PORT:-6969}
+      TAOS_BROWSER_PROXY_PORT: ${TAOS_BROWSER_PROXY_PORT:-6970}
+      TAOS_DATA_DIR: ${TAOS_DATA_DIR:-/app/data}
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,4 +82,3 @@ volumes:
   postgres_data:
   ollama_data:
   taos_data:
-  taos_static:
