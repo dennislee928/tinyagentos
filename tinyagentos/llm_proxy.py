@@ -305,41 +305,54 @@ def generate_litellm_config(
                     },
                 })
 
-        # Auto-discover embedding models on ollama-compatible backends and
-        # register each as its own LiteLLM entry. The first embedding model
-        # found across all backends also claims the stable
-        # ``taos-embedding-default`` alias so containers have one name to
-        # inject regardless of which rkllama box holds the model.
+        # Auto-discover ALL models on ollama-compatible backends.
+        # Chat models are registered individually (so Deploy Agent can pick them),
+        # embedding models get their own entry + taos-embedding-default alias.
         if backend_type in ("ollama", "rkllama"):
             discovered = _discover_ollama_models(url)
             for discovered_name in discovered:
-                if not _is_embedding_model(discovered_name):
-                    continue
-                embed_params = {
-                    "model": f"ollama/{discovered_name}",
-                    "api_base": url,
-                }
-                model_list.append({
-                    "model_name": discovered_name,
-                    "litellm_params": embed_params,
-                    "model_info": {"mode": "embedding"},
-                    "metadata": {
-                        "priority": backend.get("priority", 99),
-                        "backend_name": backend.get("name", ""),
-                    },
-                })
-                if not aliased_embedding_claimed:
+                if _is_embedding_model(discovered_name):
+                    embed_params = {
+                        "model": f"ollama/{discovered_name}",
+                        "api_base": url,
+                    }
                     model_list.append({
-                        "model_name": EMBEDDING_ALIAS,
-                        "litellm_params": dict(embed_params),
+                        "model_name": discovered_name,
+                        "litellm_params": embed_params,
                         "model_info": {"mode": "embedding"},
                         "metadata": {
                             "priority": backend.get("priority", 99),
                             "backend_name": backend.get("name", ""),
-                            "aliases": discovered_name,
                         },
                     })
-                    aliased_embedding_claimed = True
+                    if not aliased_embedding_claimed:
+                        model_list.append({
+                            "model_name": EMBEDDING_ALIAS,
+                            "litellm_params": dict(embed_params),
+                            "model_info": {"mode": "embedding"},
+                            "metadata": {
+                                "priority": backend.get("priority", 99),
+                                "backend_name": backend.get("name", ""),
+                                "aliases": discovered_name,
+                            },
+                        })
+                        aliased_embedding_claimed = True
+                else:
+                    # Register each chat model individually so the Deploy Agent
+                    # picker shows concrete model names instead of just "default".
+                    if any(e.get("model_name") == discovered_name for e in model_list):
+                        continue
+                    model_list.append({
+                        "model_name": discovered_name,
+                        "litellm_params": {
+                            "model": f"ollama_chat/{discovered_name}",
+                            "api_base": url,
+                        },
+                        "metadata": {
+                            "priority": backend.get("priority", 99),
+                            "backend_name": backend.get("name", ""),
+                        },
+                    })
 
     return {
         "model_list": model_list,
