@@ -1,16 +1,19 @@
-name: Build Electron installers
+name: Build Desktop installers
 
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    types: [closed]
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Release version (e.g. 0.2.0)"
-        required: true
 
 permissions:
   contents: write
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
 
 jobs:
   build-mac:
@@ -23,10 +26,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -34,36 +36,26 @@ jobs:
           path: ~/Library/Caches/pip
           key: pip-mac-${{ hashFiles('pyproject.toml') }}
 
-      - name: Install Python deps
-        run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev]"
 
-      - name: Set up Node 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
           cache-dependency-path: desktop/package-lock.json
 
       - name: Build SPA frontend
-        run: |
-          cd desktop
-          npm ci --silent
-          npm run build
+        run: cd desktop && npm ci --silent && npm run build
 
-      - name: Install electron + electron-builder
-        run: |
-          cd electron
-          npm ci --silent
+      - name: Install electron-builder
+        run: cd electron && npm ci --silent
 
       - name: Build DMG
-        run: |
-          cd electron
-          npx electron-builder --mac --arm64=${{ matrix.arch == 'arm64' }}
+        run: cd electron && npx electron-builder --mac --arm64=${{ matrix.arch == 'arm64' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload DMG
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: TinyAgentOS-mac-${{ matrix.arch }}
           path: electron/dist/*.dmg
@@ -75,10 +67,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -86,46 +77,35 @@ jobs:
           path: ~\AppData\Local\pip\Cache
           key: pip-win-${{ hashFiles('pyproject.toml') }}
 
-      - name: Install Python deps
-        run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev]"
 
-      - name: Set up Node 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
           cache-dependency-path: desktop/package-lock.json
 
       - name: Build SPA frontend
-        run: |
-          cd desktop
-          npm ci --silent
-          npm run build
+        run: cd desktop && npm ci --silent && npm run build
         shell: bash
 
-      - name: Install electron + electron-builder
-        run: |
-          cd electron
-          npm ci --silent
+      - name: Install electron-builder
+        run: cd electron && npm ci --silent
         shell: bash
 
       - name: Build EXE + MSI
-        run: |
-          cd electron
-          npx electron-builder --win
+        run: cd electron && npx electron-builder --win
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload EXE
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: TinyAgentOS-win-exe
           path: electron/dist/*.exe
           if-no-files-found: error
 
-      - name: Upload MSI
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: TinyAgentOS-win-msi
           path: electron/dist/*.msi
@@ -133,28 +113,60 @@ jobs:
 
   build-linux:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x64, arm64]
 
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install Python deps
-        run: pip install -e ".[dev]"
-
-      - name: Set up Node 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
           cache-dependency-path: desktop/package-lock.json
+
+      - run: pip install -e ".[dev]"
+
+      - name: Build SPA frontend
+        run: cd desktop && npm ci --silent && npm run build
+
+      - name: Install electron-builder
+        run: cd electron && npm ci --silent
+
+      - name: Build AppImage
+        run: cd electron && npx electron-builder --linux
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TinyAgentOS-linux-x64
+          path: electron/dist/*.AppImage
+          if-no-files-found: warn
+
+  build-deb:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compute version
+        id: version
+        run: |
+          BASE=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VER="${BASE}"
+          else
+            VER="${BASE}-dev-$(date -u +%Y%m%d)+${GITHUB_SHA::7}"
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Install fpm
+        run: sudo gem install fpm --no-document
 
       - name: Build SPA frontend
         run: |
@@ -162,31 +174,88 @@ jobs:
           npm ci --silent
           npm run build
 
-      - name: Install electron + electron-builder
+      - name: Stage .deb contents
         run: |
-          cd electron
-          npm ci --silent
+          mkdir -p /tmp/deb/opt/tinyagentos
+          cp -r tinyagentos /tmp/deb/opt/tinyagentos/
+          cp -r data /tmp/deb/opt/tinyagentos/
+          cp -r app-catalog /tmp/deb/opt/tinyagentos/
+          cp -r static /tmp/deb/opt/tinyagentos/
+          cp pyproject.toml /tmp/deb/opt/tinyagentos/
+          mkdir -p /tmp/deb/lib/systemd/system
+          cp systemd/tinyagentos.service /tmp/deb/lib/systemd/system/
 
-      - name: Build AppImage
+      - name: Create post-install script
         run: |
-          cd electron
-          npx electron-builder --linux --arm64=${{ matrix.arch == 'arm64' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          cat > /tmp/deb-postinst.sh << 'SCRIPT'
+          #!/bin/bash
+          set -e
+          cd /opt/tinyagentos
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install -e . --quiet
+          systemctl daemon-reload
+          systemctl enable tinyagentos.service
+          systemctl start tinyagentos.service || true
+          SCRIPT
+          chmod +x /tmp/deb-postinst.sh
 
-      - name: Upload AppImage
-        uses: actions/upload-artifact@v4
+      - name: Build .deb
+        run: |
+          fpm -s dir -t deb \
+            -n tinyagentos \
+            -v ${{ steps.version.outputs.version }} \
+            --description "Self-hosted AI agent platform" \
+            --license "AGPL-3.0-or-later" \
+            --url "https://github.com/jaylfc/tinyagentos" \
+            --vendor "jaylfc" \
+            --maintainer "jaylfc" \
+            --depends "python3 >= 3.11" \
+            --depends "python3-pip" \
+            --depends "python3-venv" \
+            --depends "libtorrent-rasterbar-dev" \
+            --depends "libsqlcipher-dev" \
+            --depends "git" \
+            --depends "curl" \
+            --depends "uvicorn" \
+            --after-install /tmp/deb-postinst.sh \
+            -C /tmp/deb \
+            opt/ lib/
+
+      - name: Rename .deb
+        run: |
+          mv tinyagentos_*.deb "tinyagentos_${{ steps.version.outputs.version }}_amd64.deb"
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: TinyAgentOS-linux-${{ matrix.arch }}
-          path: electron/dist/*.AppImage
-          if-no-files-found: warn
+          name: TinyAgentOS-deb
+          path: tinyagentos_*.deb
+          if-no-files-found: error
 
   release:
-    needs: [build-mac, build-windows, build-linux]
+    needs: [build-mac, build-windows, build-linux, build-deb]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: >
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true) ||
+      github.event_name == 'workflow_dispatch'
 
     steps:
+      - uses: actions/checkout@v5
+
+      - name: Compute release version
+        id: version
+        run: |
+          BASE=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "version=${BASE}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            VER="${BASE}-dev-$(date -u +%Y%m%d)+${GITHUB_SHA::7}"
+            echo "version=${VER}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/download-artifact@v4
         with:
           pattern: TinyAgentOS-*
@@ -195,29 +264,40 @@ jobs:
       - name: List artifacts
         run: ls -la
 
+      - name: Generate release body
+        id: body
+        run: |
+          cat > /tmp/release-body.md << 'BODY'
+          ## TinyAgentOS ${{ steps.version.outputs.version }}
+
+          ### Desktop Installers
+          - **macOS**: TinyAgentOS-*.dmg (Apple Silicon + Intel)
+          - **Windows**: TinyAgentOS-*-setup.exe (NSIS) + TinyAgentOS-*.msi (MSI)
+          - **Linux**: TinyAgentOS-*.AppImage + tinyagentos_*.deb
+
+          ### Docker
+          ```bash
+          docker pull ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+          ```
+
+          ### What's new
+          See the commit log for details.
+          BODY
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/release-body.md >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: TinyAgentOS ${{ github.ref_name }}
-          body: |
-            ## TinyAgentOS ${{ github.ref_name }}
-
-            ### Desktop Installers
-            - **macOS**: TinyAgentOS-*.dmg (Apple Silicon + Intel)
-            - **Windows**: TinyAgentOS-*-setup.exe (NSIS installer) + TinyAgentOS-*.msi (MSI)
-            - **Linux**: TinyAgentOS-*.AppImage (x64 + arm64)
-
-            ### Docker
-            ```bash
-            docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ```
-
-            ### What's new
-            See the commit log for details.
+          tag_name: v${{ steps.version.outputs.version }}
+          name: TinyAgentOS ${{ steps.version.outputs.version }}
+          body: ${{ steps.body.outputs.body }}
+          draft: ${{ github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/v') }}
+          prerelease: ${{ steps.version.outputs.prerelease }}
           files: |
             *.dmg
             *.exe
             *.msi
             *.AppImage
-          draft: false
-          prerelease: false
+            *.deb

@@ -1,0 +1,146 @@
+name: Build SBC OS images
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      boards:
+        description: "Boards to build (comma-separated, empty = all)"
+        required: false
+        default: ""
+      version:
+        description: "Release version override"
+        required: false
+
+permissions:
+  contents: write
+
+env:
+  ARMBIAN_REPO: https://github.com/armbian/build
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        board:
+          - orangepi5plus
+          - orangepi5
+          - rock5b
+          - rpi4
+          - rpi5
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Determine board list
+        id: boards
+        run: |
+          if [[ -n "${{ github.event.inputs.boards }}" ]]; then
+            echo "Building selected boards: ${{ github.event.inputs.boards }}"
+          else
+            echo "Building all boards"
+          fi
+
+      - name: Skip if not in selected board list
+        if: ${{ github.event.inputs.boards != '' && !contains(github.event.inputs.boards, matrix.board) }}
+        run: |
+          echo "Skipping ${{ matrix.board }} (not in selected list)"
+          exit 0
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/hostedtoolcache
+          df -h
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            uuid-dev zlib1g-dev liblz4-dev liblzo2-dev \
+            libcrypto++-dev libssl-dev libudev-dev \
+            libattr1-dev libfuse-dev libaio-dev \
+            python3-setuptools python3-dev patchelf \
+            qemu-user-static debootstrap binfmt-support
+
+      - name: Clone Armbian build framework
+        run: |
+          git clone --depth 1 "${{ env.ARMBIAN_REPO }}" ../armbian-build
+
+      - name: Copy userpatches
+        run: |
+          cp -r os-build/userpatches ../armbian-build/
+
+      - name: Build OS image for ${{ matrix.board }}
+        run: |
+          cd ../armbian-build
+          sudo bash -c "
+            ln -sf /proc/self/mounts /etc/mtab
+            ./compile.sh \
+              BOARD=${{ matrix.board }} \
+              BRANCH=vendor \
+              RELEASE=bookworm \
+              BUILD_DESKTOP=no \
+              ENABLE_EXTENSIONS=tinyagentos \
+              COMPRESS_OUTPUTIMAGE=sha,xz \
+              KERNEL_CONFIGURE=no \
+              SKIP_BOOTSPLASH=yes \
+              EXPERT=yes \
+              2>&1 | tee build.log
+          "
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p artifacts
+          find ../armbian-build/output/images/ -name "*.img.xz" -exec cp {} artifacts/ \;
+          find ../armbian-build/output/images/ -name "*.sha" -exec cp {} artifacts/ \;
+          ls -la artifacts/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TinyAgentOS-image-${{ matrix.board }}
+          path: artifacts/
+          if-no-files-found: warn
+
+  attach-to-release:
+    needs: [build-image]
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compute version
+        id: version
+        run: |
+          BASE=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "version=${BASE}" >> "$GITHUB_OUTPUT"
+          else
+            VER="${BASE}-dev-$(date -u +%Y%m%d)+${GITHUB_SHA::7}"
+            echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: TinyAgentOS-image-*
+          merge-multiple: true
+
+      - name: List image artifacts
+        run: ls -la
+
+      - name: Upload images to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          files: |
+            *.img.xz
+            *.sha
+          fail_on_unmatched_files: false
