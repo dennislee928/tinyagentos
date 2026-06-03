@@ -1,0 +1,3 @@
+{"timestamp": 1780468768.417401, "event_type": "agent_deployed", "agent_name": "wayne", "app_id": null, "summary": "deployed wayne", "data": {"slug": "wayne", "framework": "openclaw"}}
+{"timestamp": 1780468851.6258738, "event_type": "agent_deployed", "agent_name": "prometheus", "app_id": null, "summary": "deployed prometheus", "data": {"slug": "prometheus", "framework": "openclaw"}}
+{"timestamp": 1780468887.489695, "event_type": "agent_deployed", "agent_name": "thanos", "app_id": null, "summary": "deployed thanos", "data": {"slug": "thanos", "framework": "shibaclaw"}}
