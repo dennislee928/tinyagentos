@@ -40,7 +40,8 @@ cp -r ../tinyagentos/os-build/userpatches .
 | Orange Pi 5 Plus | RK3588 | 6 TOPS RKNN | Primary target |
 | Orange Pi 5 | RK3588S | 6 TOPS RKNN | Supported |
 | Rock 5B | RK3588 | 6 TOPS RKNN | Supported |
-| Raspberry Pi 5 | BCM2712 | None (Hailo via M.2) | Planned |
+| Raspberry Pi 4 | BCM2711 | None | Experimental Armbian image |
+| Raspberry Pi 5 | BCM2712 | None (Hailo via M.2) | Planned; use Raspberry Pi OS installer |
 
 See `boards/` for per-board details and build commands.
 
@@ -54,6 +55,7 @@ os-build/
 │   ├── orangepi5plus.md
 │   ├── orangepi5.md
 │   ├── rock5b.md
+│   ├── rpi4.md
 │   └── rpi5.md
 └── userpatches/
     ├── customize-image.sh          # Runs inside chroot during build

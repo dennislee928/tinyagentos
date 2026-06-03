@@ -21,6 +21,7 @@ permissions:
 
 env:
   ARMBIAN_REPO: https://github.com/armbian/build
+  REPORT_DIR: ci-reports
 
 jobs:
   build-image:
@@ -28,12 +29,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        board:
-          - orangepi5plus
-          - orangepi5
-          - rock5b
-          - rpi4
-          - rpi5
+        include:
+          - id: orangepi5plus
+            armbian_board: orangepi5-plus
+            branch: vendor
+          - id: orangepi5
+            armbian_board: orangepi5
+            branch: vendor
+          - id: rock5b
+            armbian_board: rock-5b
+            branch: vendor
+          - id: rpi4
+            armbian_board: rpi4b
+            branch: current
 
     steps:
       - uses: actions/checkout@v5
@@ -41,49 +49,105 @@ jobs:
       - name: Determine board list
         id: boards
         run: |
-          if [[ -n "${{ github.event.inputs.boards }}" ]]; then
-            echo "Building selected boards: ${{ github.event.inputs.boards }}"
+          set -euo pipefail
+          selected="${{ github.event.inputs.boards }}"
+          board_id="${{ matrix.id }}"
+          armbian_board="${{ matrix.armbian_board }}"
+
+          if [[ -n "$selected" ]]; then
+            echo "Building selected boards: $selected"
+            should_build=false
+            IFS=',' read -ra boards <<< "$selected"
+            for board in "${boards[@]}"; do
+              board="$(echo "$board" | xargs)"
+              if [[ "$board" == "$board_id" || "$board" == "$armbian_board" ]]; then
+                should_build=true
+                break
+              fi
+            done
           else
             echo "Building all boards"
+            should_build=true
           fi
 
-      - name: Skip if not in selected board list
-        if: ${{ github.event.inputs.boards != '' && !contains(github.event.inputs.boards, matrix.board) }}
+          echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
+
+      - name: Initialize build report
+        id: report_init
+        if: ${{ steps.boards.outputs.should_build == 'true' }}
         run: |
-          echo "Skipping ${{ matrix.board }} (not in selected list)"
+          set -euo pipefail
+          mkdir -p "$REPORT_DIR"
+          {
+            echo "board_id=${{ matrix.id }}"
+            echo "armbian_board=${{ matrix.armbian_board }}"
+            echo "branch=${{ matrix.branch }}"
+            echo "run_id=${{ github.run_id }}"
+            echo "run_attempt=${{ github.run_attempt }}"
+            echo "head_sha=${{ github.sha }}"
+          } | tee "$REPORT_DIR/context.txt"
+
+      - name: Skip if not in selected board list
+        if: ${{ steps.boards.outputs.should_build != 'true' }}
+        run: |
+          echo "Skipping ${{ matrix.id }} (not in selected list)"
           exit 0
 
       - name: Free disk space
+        id: free_space
+        if: ${{ steps.boards.outputs.should_build == 'true' }}
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/hostedtoolcache
-          df -h
+          set -euo pipefail
+          {
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/hostedtoolcache
+            df -h
+          } 2>&1 | tee "$REPORT_DIR/free-disk-space.log"
 
       - name: Install system deps
+        id: system_deps
+        if: ${{ steps.boards.outputs.should_build == 'true' }}
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
-            uuid-dev zlib1g-dev liblz4-dev liblzo2-dev \
-            libcrypto++-dev libssl-dev libudev-dev \
-            libattr1-dev libfuse-dev libaio-dev \
-            python3-setuptools python3-dev patchelf \
-            qemu-user-static debootstrap binfmt-support
+          set -euo pipefail
+          {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends \
+              uuid-dev zlib1g-dev liblz4-dev liblzo2-dev \
+              libcrypto++-dev libssl-dev libudev-dev \
+              libattr1-dev libfuse-dev libaio-dev \
+              python3-setuptools python3-dev patchelf \
+              qemu-user-static debootstrap binfmt-support
+          } 2>&1 | tee "$REPORT_DIR/install-system-deps.log"
 
       - name: Clone Armbian build framework
+        id: clone_armbian
+        if: ${{ steps.boards.outputs.should_build == 'true' }}
         run: |
-          git clone --depth 1 "${{ env.ARMBIAN_REPO }}" ../armbian-build
+          set -euo pipefail
+          git clone --depth 1 "${{ env.ARMBIAN_REPO }}" ../armbian-build \
+            2>&1 | tee "$REPORT_DIR/clone-armbian.log"
 
       - name: Copy userpatches
+        id: copy_userpatches
+        if: ${{ steps.boards.outputs.should_build == 'true' }}
         run: |
-          cp -r os-build/userpatches ../armbian-build/
+          set -euo pipefail
+          {
+            cp -r os-build/userpatches ../armbian-build/
+            find ../armbian-build/userpatches -maxdepth 3 -type f | sort
+          } 2>&1 | tee "$REPORT_DIR/copy-userpatches.log"
 
-      - name: Build OS image for ${{ matrix.board }}
+      - name: Build OS image for ${{ matrix.id }}
+        id: build_os_image
+        if: ${{ steps.boards.outputs.should_build == 'true' }}
         run: |
+          set -euo pipefail
           cd ../armbian-build
           sudo bash -c "
+            set -euo pipefail
             ln -sf /proc/self/mounts /etc/mtab
             ./compile.sh \
-              BOARD=${{ matrix.board }} \
-              BRANCH=vendor \
+              BOARD=${{ matrix.armbian_board }} \
+              BRANCH=${{ matrix.branch }} \
               RELEASE=bookworm \
               BUILD_DESKTOP=no \
               ENABLE_EXTENSIONS=tinyagentos \
@@ -92,19 +156,107 @@ jobs:
               SKIP_BOOTSPLASH=yes \
               EXPERT=yes \
               2>&1 | tee build.log
-          "
+          " 2>&1 | tee "$GITHUB_WORKSPACE/$REPORT_DIR/build-os-image.log"
 
       - name: Collect artifacts
+        id: collect_artifacts
+        if: ${{ steps.boards.outputs.should_build == 'true' }}
         run: |
-          mkdir -p artifacts
-          find ../armbian-build/output/images/ -name "*.img.xz" -exec cp {} artifacts/ \;
-          find ../armbian-build/output/images/ -name "*.sha" -exec cp {} artifacts/ \;
-          ls -la artifacts/
+          set -euo pipefail
+          {
+            mkdir -p artifacts
+            if [[ ! -d ../armbian-build/output/images ]]; then
+              echo "::error::Armbian did not create output/images. Check the Build OS image step log."
+              exit 1
+            fi
+            find ../armbian-build/output/images/ -name "*.img.xz" -exec cp {} artifacts/ \;
+            find ../armbian-build/output/images/ -name "*.sha" -exec cp {} artifacts/ \;
+            ls -la artifacts/
+            if ! compgen -G "artifacts/*.img.xz" > /dev/null; then
+              echo "::error::Armbian completed without producing a compressed image."
+              exit 1
+            fi
+          } 2>&1 | tee "$REPORT_DIR/collect-artifacts.log"
 
       - uses: actions/upload-artifact@v4
+        id: upload_image
+        if: ${{ steps.boards.outputs.should_build == 'true' }}
         with:
-          name: TinyAgentOS-image-${{ matrix.board }}
+          name: TinyAgentOS-image-${{ matrix.id }}
           path: artifacts/
+          if-no-files-found: warn
+
+      - name: Generate build report
+        id: generate_report
+        if: ${{ always() && steps.boards.outputs.should_build == 'true' }}
+        run: |
+          set +e
+          mkdir -p "$REPORT_DIR/armbian-logs"
+
+          if [[ -d ../armbian-build ]]; then
+            find ../armbian-build -maxdepth 5 -type f -name "*.log" | while read -r log_file; do
+              rel_path="${log_file#../armbian-build/}"
+              dest="$REPORT_DIR/armbian-logs/$rel_path"
+              mkdir -p "$(dirname "$dest")"
+              cp "$log_file" "$dest"
+            done
+
+            {
+              echo "## ../armbian-build"
+              find ../armbian-build -maxdepth 3 -type d | sort
+              echo
+              echo "## ../armbian-build/output"
+              find ../armbian-build/output -maxdepth 4 -print 2>/dev/null | sort
+            } > "$REPORT_DIR/armbian-tree.txt"
+          fi
+
+          df -h > "$REPORT_DIR/disk-after-build.txt"
+          du -sh . ../armbian-build 2>/dev/null > "$REPORT_DIR/workspace-size.txt"
+
+          grep -RniE \
+            --exclude=error-excerpts.txt \
+            --exclude=report.md \
+            "error|failed|fatal|traceback|exception|no space left|not found|unsupported|exited with|permission denied" \
+            "$REPORT_DIR" > "$REPORT_DIR/error-excerpts.txt" || true
+
+          {
+            echo "# TinyAgentOS SBC image build report"
+            echo
+            echo "- Board id: \`${{ matrix.id }}\`"
+            echo "- Armbian board: \`${{ matrix.armbian_board }}\`"
+            echo "- Branch: \`${{ matrix.branch }}\`"
+            echo "- Run: \`${{ github.run_id }}\`, attempt \`${{ github.run_attempt }}\`"
+            echo "- SHA: \`${{ github.sha }}\`"
+            echo
+            echo "## Phase outcomes"
+            echo
+            echo "| Phase | Outcome | Log |"
+            echo "| --- | --- | --- |"
+            echo "| initialize report | ${{ steps.report_init.outcome }} | context.txt |"
+            echo "| free disk space | ${{ steps.free_space.outcome }} | free-disk-space.log |"
+            echo "| install system deps | ${{ steps.system_deps.outcome }} | install-system-deps.log |"
+            echo "| clone Armbian | ${{ steps.clone_armbian.outcome }} | clone-armbian.log |"
+            echo "| copy userpatches | ${{ steps.copy_userpatches.outcome }} | copy-userpatches.log |"
+            echo "| build OS image | ${{ steps.build_os_image.outcome }} | build-os-image.log |"
+            echo "| collect artifacts | ${{ steps.collect_artifacts.outcome }} | collect-artifacts.log |"
+            echo "| upload image artifact | ${{ steps.upload_image.outcome }} | GitHub Actions artifact step |"
+            echo
+            echo "## Error excerpts"
+            echo
+            if [[ -s "$REPORT_DIR/error-excerpts.txt" ]]; then
+              sed -n '1,240p' "$REPORT_DIR/error-excerpts.txt"
+            else
+              echo "No matching error patterns were found in collected logs."
+            fi
+          } > "$REPORT_DIR/report.md"
+
+          cat "$REPORT_DIR/report.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.boards.outputs.should_build == 'true' }}
+        with:
+          name: TinyAgentOS-build-report-${{ matrix.id }}
+          path: ${{ env.REPORT_DIR }}/
           if-no-files-found: warn
 
   attach-to-release:

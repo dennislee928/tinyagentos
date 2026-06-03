@@ -35,9 +35,10 @@ No LLM-capable accelerators available for Pi 4.
 ## Build Command
 
 ```bash
-# Using Raspberry Pi OS (not Armbian — better Pi support)
-# TinyAgentOS installed via install script on stock Raspberry Pi OS
+# Experimental Armbian image
+./build.sh rpi4 BRANCH=current
 
+# Or stock Raspberry Pi OS with the TinyAgentOS install script
 curl -sL https://raw.githubusercontent.com/jaylfc/tinyagentos/master/install.sh | sudo bash
 ```
 

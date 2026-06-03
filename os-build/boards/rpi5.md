@@ -50,16 +50,14 @@
 ## Build Command
 
 ```bash
-# Using Armbian
-./build.sh rpi5 BRANCH=current
-
-# Or stock Raspberry Pi OS with install script
+# Armbian does not currently publish an rpi5 board config.
+# Use stock Raspberry Pi OS with the TinyAgentOS install script.
 curl -sL https://raw.githubusercontent.com/jaylfc/tinyagentos/master/install.sh | sudo bash
 ```
 
 ## Kernel
 
-Use **current** branch (Armbian mainline-based). No vendor kernel needed — mainline support is excellent. For Hailo support, Raspberry Pi OS may be better (native Hailo driver support).
+Use Raspberry Pi OS for now. For Hailo support, Raspberry Pi OS may be better than a generic mainline image because it has native Hailo driver support.
 
 ## Notes
 
